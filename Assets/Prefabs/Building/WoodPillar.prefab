@@ -45,9 +45,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d7defc8f372453e4b94600186204aa8a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BuildPiece
+  pieceId: WoodPillar
   displayName: "\u0421\u0442\u043E\u043B\u0431"
+  category: "\u0414\u0435\u0440\u0435\u0432\u043E"
   maxHealth: 150
   size: {x: 0.5, y: 3, z: 0.5}
+  costWood: 1
+  costStone: 0
   buildable: 1
 --- !u!1 &6136644807759166264
 GameObject:

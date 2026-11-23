@@ -7,6 +7,7 @@ using UnityEngine;
 public class BuildPiece : MonoBehaviour
 {
     public string pieceId = "";              // имя детали (совпадает с именем префаба)
+    public int netId;                        // номер детали в мире (одинаковый у всех игроков)
     public string displayName = "Постройка";
     public string category = "Дерево";
     public float maxHealth = 300f;
@@ -18,6 +19,7 @@ public class BuildPiece : MonoBehaviour
     public float Health { get; private set; }
 
     public static readonly List<BuildPiece> All = new List<BuildPiece>();
+    public static readonly Dictionary<int, BuildPiece> ById = new Dictionary<int, BuildPiece>();
 
     Renderer[] renderers;
     Color[] baseColors;
@@ -52,10 +54,26 @@ public class BuildPiece : MonoBehaviour
         block = new MaterialPropertyBlock();
     }
 
-    void OnEnable() { All.Add(this); }
-    void OnDisable() { All.Remove(this); }
+    void OnEnable()
+    {
+        All.Add(this);
+        if (netId != 0) ById[netId] = this;
+    }
 
-    // Урон (для врагов). Вызывать через BuildingManager.Damage
+    void OnDisable()
+    {
+        All.Remove(this);
+        if (ById.TryGetValue(netId, out BuildPiece p) && p == this) ById.Remove(netId);
+    }
+
+    public void AssignId(int id)
+    {
+        if (ById.TryGetValue(netId, out BuildPiece p) && p == this) ById.Remove(netId);
+        netId = id;
+        ById[id] = this;
+    }
+
+    // Урон (для врагов). Вызывать через BuildingManager.Damage — он и уберёт деталь, когда прочность кончится
     public void ApplyDamage(float amount)
     {
         if (Health <= 0f) return;
@@ -70,7 +88,6 @@ public class BuildPiece : MonoBehaviour
             block.SetColor("_Color", c);
             renderers[i].SetPropertyBlock(block);
         }
-        if (Health <= 0f) BuildingManager.Dismantle(this, 0.3f);
     }
 
     // Убрать деталь из мира. debris = рассыпаться на обломки

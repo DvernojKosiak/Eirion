@@ -33,6 +33,9 @@ public class PlayerCamera : MonoBehaviour
     public float shoulderOffset = 0.5f; // сдвиг камеры вправо, "из-за плеча"
     public float collisionRadius = 0.2f;// чтобы камера не залезала в стены
 
+    // Когда открыто меню (например, построек), клик мышью не должен захватывать курсор
+    public static bool BlockCursorLock;
+
     float pitch;            // наклон головы вверх/вниз
     bool thirdPerson;
     float currentDistance;  // текущее расстояние (с учётом стен)
@@ -57,7 +60,7 @@ public class PlayerCamera : MonoBehaviour
 
         // Курсор
         if (kb != null && kb.escapeKey.wasPressedThisFrame) LockCursor(false);
-        if (mouse != null && mouse.leftButton.wasPressedThisFrame && Cursor.lockState != CursorLockMode.Locked)
+        if (mouse != null && mouse.leftButton.wasPressedThisFrame && Cursor.lockState != CursorLockMode.Locked && !BlockCursorLock)
             LockCursor(true);
 
         // Переключение вида

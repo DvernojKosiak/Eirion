@@ -45,9 +45,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d7defc8f372453e4b94600186204aa8a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BuildPiece
-  displayName: "\u041F\u043E\u043C\u043E\u0441\u0442"
+  pieceId: WoodFloor
+  displayName: "\u041F\u043E\u043B / \u043F\u043E\u043C\u043E\u0441\u0442"
+  category: "\u0414\u0435\u0440\u0435\u0432\u043E"
   maxHealth: 200
   size: {x: 4, y: 0.3, z: 4}
+  costWood: 3
+  costStone: 0
   buildable: 1
 --- !u!1 &8902665208573690386
 GameObject:

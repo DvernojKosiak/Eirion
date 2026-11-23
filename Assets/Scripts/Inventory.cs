@@ -5,8 +5,8 @@ using UnityEngine;
 // Сам подбирает ресурсы, которые лежат рядом.
 public class Inventory : MonoBehaviour
 {
-    public int wood = 60;      // стартовые ресурсы
-    public int stone = 40;
+    public int wood = 10;      // стартовые ресурсы — остальное добываем
+    public int stone = 0;
     public float pickupRadius = 3f;
 
     readonly Dictionary<string, int> pieces = new Dictionary<string, int>();

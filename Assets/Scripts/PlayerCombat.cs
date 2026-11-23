@@ -1,9 +1,10 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-// Меч: ЛКМ — взмах. Свои постройки меч НЕ ломает (для этого молот).
-// Зато толкает обломки и ресурсы. Урон по врагам добавим, когда появятся враги.
-// Ещё рисует прицел.
+// ЛКМ — взмах тем, что в руке (меч, топор, кирка).
+//   Топор рубит деревья, кирка бьёт камни — выпадают ресурсы.
+//   Меч свои постройки не ломает, толкает обломки. Урон по врагам добавим вместе с врагами.
+// Ещё рисует прицел и подсказку, на что смотришь.
 public class PlayerCombat : MonoBehaviour
 {
     public float range = 3f;
@@ -16,11 +17,11 @@ public class PlayerCombat : MonoBehaviour
     float swing;
     Transform swingModel;
     Quaternion restRotation;
+    ResourceNode lookedNode;
+    string message;
+    float messageUntil;
 
-    public void PlaySwing()
-    {
-        swing = 1f;
-    }
+    public void PlaySwing() { swing = 1f; }
 
     void Start()
     {
@@ -38,14 +39,23 @@ public class PlayerCombat : MonoBehaviour
             if (swingModel != null) restRotation = swingModel.localRotation;
         }
 
-        bool swordInHand = hotbar == null || hotbar.Current == Tool.Sword;
+        Tool tool = hotbar != null ? hotbar.Current : Tool.Sword;
+        lookedNode = null;
+        if (tool != Tool.Hammer && AimHelper.Aim(cam, transform, range, out RaycastHit hit))
+            lookedNode = hit.collider.GetComponentInParent<ResourceNode>();
+
         Mouse mouse = Mouse.current;
-        if (swordInHand && mouse != null && Cursor.lockState == CursorLockMode.Locked &&
+        if (tool != Tool.Hammer && mouse != null && Cursor.lockState == CursorLockMode.Locked &&
             mouse.leftButton.wasPressedThisFrame && Time.time >= nextHitTime)
         {
             nextHitTime = Time.time + cooldown;
             PlaySwing();
-            PushThings();
+            if (lookedNode != null)
+            {
+                if (tool == lookedNode.requiredTool) BuildingManager.RequestHitNode(lookedNode);
+                else Say("Нужен " + PlayerHotbar.NameOf(lookedNode.requiredTool).ToLower() + " (клавиша " + ((int)lookedNode.requiredTool + 1) + ")");
+            }
+            else if (tool == Tool.Sword) PushThings();
         }
 
         if (swingModel != null)
@@ -55,6 +65,8 @@ public class PlayerCombat : MonoBehaviour
             swingModel.localRotation = restRotation * Quaternion.Euler(a, -a * 0.4f, 0f);
         }
     }
+
+    void Say(string text) { message = text; messageUntil = Time.time + 1.5f; }
 
     // Толкнуть обломки и ресурсы перед собой
     void PushThings()
@@ -72,6 +84,15 @@ public class PlayerCombat : MonoBehaviour
     void OnGUI()
     {
         GUI.Label(new Rect(Screen.width / 2f - 6, Screen.height / 2f - 12, 20, 24), "+", Hud.Big);
+
+        if (lookedNode != null)
+        {
+            Rect r = new Rect(Screen.width / 2f - 100, Screen.height / 2f + 40, 200, 10);
+            Hud.Bar(r, (float)lookedNode.HitsLeft / lookedNode.maxHits, new Color(0.9f, 0.75f, 0.3f),
+                    lookedNode.displayName + "  —  " + PlayerHotbar.NameOf(lookedNode.requiredTool).ToLower());
+        }
+        if (Time.time < messageUntil)
+            GUI.Label(new Rect(Screen.width / 2f - 250, Screen.height / 2f - 70, 500, 30), message, Hud.CenterBig);
     }
 }
 
@@ -103,18 +124,27 @@ public static class AimHelper
     }
 }
 
-// Общие помощники для надписей на экране
+// Общие помощники для надписей и панелей на экране
 public static class Hud
 {
-    static GUIStyle big, small;
+    static GUIStyle big, small, tiny, center, centerBig, centerTiny, title;
     public static GUIStyle Big => big ??= new GUIStyle(GUI.skin.label) { fontSize = 22, fontStyle = FontStyle.Bold, normal = { textColor = Color.white } };
     public static GUIStyle Small => small ??= new GUIStyle(GUI.skin.label) { fontSize = 16, normal = { textColor = Color.white } };
+    public static GUIStyle Tiny => tiny ??= new GUIStyle(GUI.skin.label) { fontSize = 12, normal = { textColor = new Color(1f, 1f, 1f, 0.7f) } };
+    public static GUIStyle Center => center ??= new GUIStyle(GUI.skin.label) { fontSize = 16, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
+    public static GUIStyle CenterBig => centerBig ??= new GUIStyle(GUI.skin.label) { fontSize = 22, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
+    public static GUIStyle CenterTiny => centerTiny ??= new GUIStyle(GUI.skin.label) { fontSize = 13, alignment = TextAnchor.MiddleCenter, normal = { textColor = new Color(1f, 1f, 1f, 0.75f) } };
+    public static GUIStyle Title => title ??= new GUIStyle(GUI.skin.label) { fontSize = 17, fontStyle = FontStyle.Bold, wordWrap = true, normal = { textColor = Color.white } };
+
+    public static void Fill(Rect r, Color c, float radius = 0f)
+    {
+        GUI.DrawTexture(r, Texture2D.whiteTexture, ScaleMode.StretchToFill, false, 0, c, 0, radius);
+    }
 
     public static void Bar(Rect r, float fill, Color color, string text)
     {
-        GUI.DrawTexture(r, Texture2D.whiteTexture, ScaleMode.StretchToFill, false, 0, new Color(0, 0, 0, 0.6f), 0, 0);
-        Rect f = new Rect(r.x, r.y, r.width * Mathf.Clamp01(fill), r.height);
-        GUI.DrawTexture(f, Texture2D.whiteTexture, ScaleMode.StretchToFill, false, 0, color, 0, 0);
-        if (!string.IsNullOrEmpty(text)) GUI.Label(new Rect(r.x, r.y - 24, r.width + 300, 24), text, Small);
+        Fill(r, new Color(0, 0, 0, 0.6f));
+        Fill(new Rect(r.x, r.y, r.width * Mathf.Clamp01(fill), r.height), color);
+        if (!string.IsNullOrEmpty(text)) GUI.Label(new Rect(r.x - 150, r.y - 26, r.width + 300, 24), text, Center);
     }
 }

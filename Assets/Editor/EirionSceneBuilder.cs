@@ -1,13 +1,16 @@
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.SceneManagement;
+using Unity.Netcode;
+using Unity.Netcode.Transports.UTP;
 using UnityEngine;
 
 // Скрипт ДЛЯ РЕДАКТОРА (не для игры). Лежит в папке Assets/Editor.
 // Меню "Eirion -> Создать сцену форта":
 //   1) делает детали построек (префабы) в Assets/Prefabs/Building;
 //   2) собирает из них большой форт — всё можно ломать и перестраивать;
-//   3) ставит деревню, лес, границу тьмы, героя с мечом и режимом стройки.
+//   3) ставит деревню, лес, границу тьмы;
+//   4) делает сетевого игрока (префаб Assets/Prefabs/Player) и меню «одному / с друзьями».
 // Направления: север (+Z) — к тьме, юг (-Z) — к деревне.
 public static class EirionSceneBuilder
 {
@@ -27,6 +30,8 @@ public static class EirionSceneBuilder
                       pFloor, pStairs, pPillar, pRoof, pGable, pBarricade,
                       pStone, pStoneHalf, pStoneSlit, pStoneArch, pTower;
     static List<BuildPiece> catalog;
+    static int sceneIdCounter;
+    static int nodeIdCounter;
 
     [MenuItem("Eirion/Создать сцену форта")]
     public static void CreateFortScene()
@@ -49,14 +54,17 @@ public static class EirionSceneBuilder
         g.GetComponent<Renderer>().sharedMaterial = grass;
         g.isStatic = true;
 
-        GameObject manager = new GameObject("BuildingManager");
-        manager.AddComponent<BuildingManager>();
-
+        sceneIdCounter = 0;
+        nodeIdCounter = 0;
         BuildFort();
         BuildVillage();
         BuildForest();
+        BuildRocks();
         BuildDarkness();
-        BuildPlayer();
+        SetupCamera();
+        GameObject playerPrefab = BuildPlayerPrefab();
+        SetupNetwork(playerPrefab);
+        SetupPlayerSettings();
 
         if (!AssetDatabase.IsValidFolder("Assets/Scenes")) AssetDatabase.CreateFolder("Assets", "Scenes");
         EditorSceneManager.SaveScene(EditorSceneManager.GetActiveScene(), ScenePath);
@@ -66,8 +74,7 @@ public static class EirionSceneBuilder
             if (s.path != ScenePath && !s.path.EndsWith("TestScene.unity")) scenes.Add(s);
         EditorBuildSettings.scenes = scenes.ToArray();
 
-        Selection.activeGameObject = GameObject.Find("Player");
-        EditorUtility.DisplayDialog("Eirion", "Готово! Сцена Fort создана и сохранена.\nНажми ▶ Play сверху.", "Ок");
+        EditorUtility.DisplayDialog("Eirion", "Готово! Сцена Fort создана и сохранена.\nНажми ▶ Play, потом «Играть одному».", "Ок");
     }
 
     // ================= Материалы =================
@@ -272,7 +279,10 @@ public static class EirionSceneBuilder
         GameObject go = (GameObject)PrefabUtility.InstantiatePrefab(prefab.gameObject);
         go.transform.SetParent(root, false);
         go.transform.SetPositionAndRotation(new Vector3(x, y, z), Quaternion.Euler(0f, yaw, 0f));
-        return go.GetComponent<BuildPiece>();
+        BuildPiece bp = go.GetComponent<BuildPiece>();
+        bp.netId = ++sceneIdCounter; // номер детали — одинаковый у всех игроков
+        PrefabUtility.RecordPrefabInstancePropertyModifications(bp);
+        return bp;
     }
 
     // Поставить деталь относительно «начала» дома, повёрнутого на houseYaw
@@ -400,36 +410,91 @@ public static class EirionSceneBuilder
     }
 
     // ================= Лес (север, зона вылазок) =================
+    // Здесь нельзя ставить деревья и камни: форт, деревня, тропа от ворот
+    static bool Blocked(Vector3 p)
+    {
+        if (Mathf.Abs(p.x) < 36f && Mathf.Abs(p.z) < 36f) return true;          // форт
+        if (p.x > -36f && p.x < 58f && p.z > -96f && p.z < -32f) return true;    // деревня и дирижабль
+        if (Mathf.Abs(p.x) < 6f && p.z > 0f && p.z < 110f) return true;          // тропа на север
+        return false;
+    }
+
     static void BuildForest()
     {
         root = new GameObject("Forest").transform;
         Random.State saved = Random.state;
         Random.InitState(1234);
         int placed = 0, tries = 0;
-        while (placed < 160 && tries < 3000)
+        while (placed < 240 && tries < 5000)
         {
             tries++;
-            Vector3 p = new Vector3(Random.Range(-190f, 190f), 0f, Random.Range(45f, 185f));
-            if (Mathf.Abs(p.x) < 7f && p.z < 100f) continue; // тропа от ворот
+            // Больше деревьев на севере, но и вокруг форта есть
+            float z = Random.value < 0.7f ? Random.Range(40f, 185f) : Random.Range(-185f, 40f);
+            Vector3 p = new Vector3(Random.Range(-190f, 190f), 0f, z);
+            if (Blocked(p)) continue;
             float s = Random.Range(0.8f, 1.5f);
 
             GameObject tree = new GameObject("Tree");
             tree.transform.SetParent(root, false);
             tree.transform.position = p;
-            tree.isStatic = true;
             GameObject trunk = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            trunk.name = "Trunk";
             trunk.transform.SetParent(tree.transform, false);
             trunk.transform.localPosition = new Vector3(0f, 2f * s, 0f);
             trunk.transform.localScale = new Vector3(0.5f * s, 2f * s, 0.5f * s);
             trunk.GetComponent<Renderer>().sharedMaterial = darkWood;
-            trunk.isStatic = true;
             GameObject crown = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            crown.name = "Crown";
             crown.transform.SetParent(tree.transform, false);
             crown.transform.localPosition = new Vector3(0f, 5f * s, 0f);
             crown.transform.localScale = Vector3.one * 3.5f * s;
             crown.GetComponent<Renderer>().sharedMaterial = leaves;
             Object.DestroyImmediate(crown.GetComponent<Collider>());
-            crown.isStatic = true;
+
+            ResourceNode node = tree.AddComponent<ResourceNode>();
+            node.netId = ++nodeIdCounter;
+            node.displayName = "Дерево";
+            node.resource = ResourceType.Wood;
+            node.requiredTool = Tool.Axe;
+            node.maxHits = 3 + Mathf.RoundToInt(s * 2f);
+            node.yieldPerHit = 2;
+            node.bonusOnBreak = 4 + Mathf.RoundToInt(s * 3f);
+            placed++;
+        }
+        Random.state = saved;
+    }
+
+    // ================= Камни (добываются киркой) =================
+    static void BuildRocks()
+    {
+        root = new GameObject("Rocks").transform;
+        Material rockMat = Mat("Rock", new Color(0.38f, 0.38f, 0.4f));
+        Random.State saved = Random.state;
+        Random.InitState(777);
+        int placed = 0, tries = 0;
+        while (placed < 110 && tries < 5000)
+        {
+            tries++;
+            Vector3 p = new Vector3(Random.Range(-190f, 190f), 0f, Random.Range(-185f, 185f));
+            if (Blocked(p)) continue;
+            Vector3 size = new Vector3(Random.Range(1.2f, 2.6f), Random.Range(0.8f, 1.6f), Random.Range(1.2f, 2.6f));
+
+            GameObject rock = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            rock.name = "Rock";
+            rock.transform.SetParent(root, false);
+            rock.transform.position = p + Vector3.up * size.y * 0.3f;
+            rock.transform.localScale = size;
+            rock.transform.rotation = Quaternion.Euler(Random.Range(-10f, 10f), Random.Range(0f, 360f), Random.Range(-10f, 10f));
+            rock.GetComponent<Renderer>().sharedMaterial = rockMat;
+
+            ResourceNode node = rock.AddComponent<ResourceNode>();
+            node.netId = ++nodeIdCounter;
+            node.displayName = "Камень";
+            node.resource = ResourceType.Stone;
+            node.requiredTool = Tool.Pickaxe;
+            node.maxHits = 3 + Mathf.RoundToInt(size.x + size.z) / 2;
+            node.yieldPerHit = 2;
+            node.bonusOnBreak = 5;
             placed++;
         }
         Random.state = saved;
@@ -455,21 +520,9 @@ public static class EirionSceneBuilder
         }
     }
 
-    // ================= Герой =================
-    static void BuildPlayer()
+    // ================= Камера (до входа в игру смотрит на форт) =================
+    static void SetupCamera()
     {
-        GameObject player = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-        player.name = "Player";
-        player.transform.position = new Vector3(0f, 1f, -12f);
-        player.GetComponent<Renderer>().sharedMaterial = playerMat;
-        Object.DestroyImmediate(player.GetComponent<CapsuleCollider>());
-        player.AddComponent<CharacterController>();
-        player.AddComponent<PlayerMovement>();
-
-        GameObject pivot = new GameObject("CameraPivot");
-        pivot.transform.SetParent(player.transform, false);
-        pivot.transform.localPosition = new Vector3(0f, 0.6f, 0f);
-
         Camera cam = Object.FindFirstObjectByType<Camera>();
         if (cam == null)
         {
@@ -478,14 +531,35 @@ public static class EirionSceneBuilder
             cam = camGo.AddComponent<Camera>();
             camGo.AddComponent<AudioListener>();
         }
-        cam.transform.SetParent(pivot.transform, false);
-        cam.transform.localPosition = Vector3.zero;
-        cam.transform.localRotation = Quaternion.identity;
+        cam.transform.SetPositionAndRotation(new Vector3(30f, 28f, -70f), Quaternion.Euler(22f, -25f, 0f));
         cam.nearClipPlane = 0.05f;
         cam.farClipPlane = 500f;
         EnableAntiAliasing(cam);
-        pivot.AddComponent<PlayerCamera>();
         cam.gameObject.AddComponent<FpsCounter>();
+    }
+
+    // ================= Сетевой игрок (префаб) =================
+    static GameObject BuildPlayerPrefab()
+    {
+        GameObject player = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+        player.name = "Player";
+        player.GetComponent<Renderer>().sharedMaterial = playerMat;
+        Object.DestroyImmediate(player.GetComponent<CapsuleCollider>());
+        player.AddComponent<CharacterController>();
+
+        player.AddComponent<NetworkObject>();
+        OwnerNetworkTransform nt = player.AddComponent<OwnerNetworkTransform>();
+        nt.SyncRotAngleX = false; // по сети передаём только поворот влево-вправо
+        nt.SyncRotAngleZ = false;
+        nt.SyncScaleX = false; nt.SyncScaleY = false; nt.SyncScaleZ = false;
+
+        PlayerMovement movement = player.AddComponent<PlayerMovement>();
+
+        GameObject pivot = new GameObject("CameraPivot");
+        pivot.transform.SetParent(player.transform, false);
+        pivot.transform.localPosition = new Vector3(0f, 0.6f, 0f);
+        PlayerCamera pcam = pivot.AddComponent<PlayerCamera>();
+        pcam.playerBody = player.transform;
 
         // Меч и молот (пока из кубиков) — в правой руке
         GameObject sword = new GameObject("Sword");
@@ -502,21 +576,81 @@ public static class EirionSceneBuilder
         hammer.transform.localRotation = Quaternion.Euler(50f, 0f, 0f);
         Part(hammer.transform, PrimitiveType.Cube, new Vector3(0f, 0.2f, 0f), new Vector3(0.05f, 0.55f, 0.05f), darkWood, Vector3.zero, false);
         Part(hammer.transform, PrimitiveType.Cube, new Vector3(0f, 0.5f, 0f), new Vector3(0.22f, 0.12f, 0.12f), steel, Vector3.zero, false);
+        hammer.SetActive(false);
 
-        foreach (GameObject tool in new[] { sword, hammer })
-            foreach (Renderer r in tool.GetComponentsInChildren<Renderer>())
+        GameObject axe = new GameObject("Axe");
+        axe.transform.SetParent(pivot.transform, false);
+        axe.transform.localPosition = new Vector3(0.45f, -0.4f, 0.55f);
+        axe.transform.localRotation = Quaternion.Euler(50f, 0f, 0f);
+        Part(axe.transform, PrimitiveType.Cube, new Vector3(0f, 0.22f, 0f), new Vector3(0.05f, 0.6f, 0.05f), darkWood, Vector3.zero, false);
+        Part(axe.transform, PrimitiveType.Cube, new Vector3(0.08f, 0.47f, 0f), new Vector3(0.16f, 0.14f, 0.03f), steel, Vector3.zero, false);
+        axe.SetActive(false);
+
+        GameObject pick = new GameObject("Pickaxe");
+        pick.transform.SetParent(pivot.transform, false);
+        pick.transform.localPosition = new Vector3(0.45f, -0.4f, 0.55f);
+        pick.transform.localRotation = Quaternion.Euler(50f, 0f, 0f);
+        Part(pick.transform, PrimitiveType.Cube, new Vector3(0f, 0.22f, 0f), new Vector3(0.05f, 0.6f, 0.05f), darkWood, Vector3.zero, false);
+        Part(pick.transform, PrimitiveType.Cube, new Vector3(0f, 0.5f, 0f), new Vector3(0.42f, 0.05f, 0.05f), steel, new Vector3(0f, 0f, 8f), false);
+        pick.SetActive(false);
+
+        foreach (GameObject tool in new[] { sword, hammer, axe, pick })
+            foreach (Renderer r in tool.GetComponentsInChildren<Renderer>(true))
                 r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
         PlayerHotbar hotbar = player.AddComponent<PlayerHotbar>();
         hotbar.swordModel = sword.transform;
         hotbar.hammerModel = hammer.transform;
+        hotbar.axeModel = axe.transform;
+        hotbar.pickaxeModel = pick.transform;
 
-        player.AddComponent<Inventory>();
-        player.AddComponent<PlayerCombat>();
-
+        Inventory inventory = player.AddComponent<Inventory>();
+        PlayerCombat combat = player.AddComponent<PlayerCombat>();
         PlayerBuilder builder = player.AddComponent<PlayerBuilder>();
         builder.ghostMaterial = ghost;
         builder.pieces = new List<BuildPiece>(catalog);
+
+        // Управление работает только у своего игрока — включит NetworkPlayer
+        Behaviour[] ownerOnly = { movement, pcam, hotbar, inventory, combat, builder };
+        foreach (Behaviour b in ownerOnly) b.enabled = false;
+
+        NetworkPlayer np = player.AddComponent<NetworkPlayer>();
+        np.ownerOnly = ownerOnly;
+        np.cameraPivot = pivot.transform;
+        np.bodyRenderer = player.GetComponent<Renderer>();
+
+        if (!AssetDatabase.IsValidFolder("Assets/Prefabs")) AssetDatabase.CreateFolder("Assets", "Prefabs");
+        GameObject prefab = PrefabUtility.SaveAsPrefabAsset(player, "Assets/Prefabs/Player.prefab");
+        Object.DestroyImmediate(player);
+        return prefab;
+    }
+
+    // ================= Сеть =================
+    static void SetupNetwork(GameObject playerPrefab)
+    {
+        GameObject netGo = new GameObject("NetworkManager");
+        NetworkManager nm = netGo.AddComponent<NetworkManager>();
+        UnityTransport transport = netGo.AddComponent<UnityTransport>();
+        if (nm.NetworkConfig == null) nm.NetworkConfig = new NetworkConfig();
+        nm.NetworkConfig.NetworkTransport = transport;
+        nm.NetworkConfig.PlayerPrefab = playerPrefab;
+        nm.NetworkConfig.EnableSceneManagement = false; // у всех одна и та же сцена форта
+        netGo.AddComponent<NetworkMenu>();
+
+        GameObject manager = new GameObject("BuildingManager");
+        manager.AddComponent<NetworkObject>();
+        BuildingManager bm = manager.AddComponent<BuildingManager>();
+        bm.catalog = new List<BuildPiece>(catalog);
+    }
+
+    // Чтобы можно было запустить две копии игры на одном компе и проверить сеть
+    static void SetupPlayerSettings()
+    {
+        PlayerSettings.runInBackground = true;
+        PlayerSettings.fullScreenMode = FullScreenMode.Windowed;
+        PlayerSettings.defaultScreenWidth = 1280;
+        PlayerSettings.defaultScreenHeight = 720;
+        PlayerSettings.resizableWindow = true;
     }
 
     // ================= Атмосфера =================

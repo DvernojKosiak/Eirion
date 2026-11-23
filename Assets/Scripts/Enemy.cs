@@ -1,8 +1,13 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-// Тварь с Тёмной половины.
-// Думает только у хоста: идёт к деревне, ломает постройки на пути, нападает на игроков рядом.
+public enum EnemyKind { Crawler, Runner, Brute, Spitter }
+
+// Тварь с Тёмной половины. Виды:
+//   Ползун — обычная. Бегун — быстрый и слабый. Громила — огромный, медленный, ломает стены, его почти не отбросить.
+//   Плевальщик — держится на расстоянии и плюётся ядом (плевок летит дугой — можно отбежать).
+// Думает только у хоста: вылезает из пропасти Раскола, идёт по дороге через форт к деревне,
+// ломает постройки на пути (ворота, баррикады), нападает на игроков рядом.
 // У остальных игроков это «копия», которая просто плавно повторяет то, что присылает хост.
 public class Enemy : MonoBehaviour
 {
@@ -14,6 +19,36 @@ public class Enemy : MonoBehaviour
     public float playerDamage = 12f;
     public float buildingDamage = 30f;
     public float aggroRange = 18f;   // с какого расстояния замечает игрока
+    public float climbSpeed = 2.5f;  // как быстро карабкается по обрыву
+    public EnemyKind kind = EnemyKind.Crawler;
+    public float bodyScale = 1f;
+    public float knockScale = 1f;    // насколько отлетает от ударов
+    public float shootRange;         // >0 — умеет плеваться
+    public float preferRange = 10f;
+    public float shootCooldown = 2.6f;
+    float nextShot;
+
+    // Характеристики вида. wave — номер набега (с каждым тварь крепче)
+    public void ApplyKind(EnemyKind k, int wave)
+    {
+        kind = k;
+        int w = Mathf.Max(0, wave - 1);
+        switch (k)
+        {
+            case EnemyKind.Runner:
+                maxHealth = 30f + 5f * w; speed = 6.5f; playerDamage = 7f; buildingDamage = 10f;
+                attackRange = 1.6f; attackCooldown = 0.7f; bodyScale = 0.75f; aggroRange = 28f; break;
+            case EnemyKind.Brute:
+                maxHealth = 280f + 45f * w; speed = 2.1f; playerDamage = 30f; buildingDamage = 140f;
+                attackRange = 2.6f; attackCooldown = 2f; bodyScale = 1.55f; aggroRange = 14f; knockScale = 0.15f; break;
+            case EnemyKind.Spitter:
+                maxHealth = 45f + 6f * w; speed = 3f; playerDamage = 14f; buildingDamage = 20f;
+                attackRange = 1.9f; attackCooldown = 1.4f; bodyScale = 0.95f; aggroRange = 22f; shootRange = 18f; break;
+            default:
+                maxHealth = 60f + 10f * w; break;
+        }
+        Health = maxHealth;
+    }
 
     public float Health { get; set; }
     public float HealthFraction { get; set; } = 1f;
@@ -35,6 +70,32 @@ public class Enemy : MonoBehaviour
     Vector3 netPos;
     float netYaw;
 
+    // Путь: точки, по которым идёт к деревне
+    Vector3[] path;
+    int pathIndex;
+    float sideOffset;
+    bool climbing;
+    float climbTop;
+    Vector3 knock;
+    Vector3 lastPos;
+    float stuckTime;
+
+    public bool Climbing => climbing;
+
+    // Задать дорогу. climbUntil — до какой высоты лезть вверх по обрыву (если тварь в пропасти)
+    public void SetPath(Vector3[] points, bool climb, float climbUntil)
+    {
+        path = points;
+        pathIndex = 0;
+        sideOffset = Random.Range(-0.4f, 0.4f); // чуть в сторону, чтобы не шли строем, но попадали в ворота
+        climbing = climb;
+        climbTop = climbUntil;
+        lastPos = transform.position;
+    }
+
+    // Отбросить (от удара)
+    public void Knock(Vector3 force) { knock += force * knockScale; }
+
     public void Setup(int enemyId, bool simulated, Transform visualRoot)
     {
         id = enemyId;
@@ -47,13 +108,13 @@ public class Enemy : MonoBehaviour
         if (simulated)
         {
             cc = gameObject.AddComponent<CharacterController>();
-            cc.radius = 0.45f; cc.height = 1.7f; cc.center = new Vector3(0f, 0.85f, 0f);
+            cc.radius = 0.45f * bodyScale; cc.height = 1.7f * bodyScale; cc.center = new Vector3(0f, 0.85f * bodyScale, 0f);
             cc.stepOffset = 0.4f;
         }
         else
         {
             CapsuleCollider col = gameObject.AddComponent<CapsuleCollider>();
-            col.radius = 0.45f; col.height = 1.7f; col.center = new Vector3(0f, 0.85f, 0f);
+            col.radius = 0.45f * bodyScale; col.height = 1.7f * bodyScale; col.center = new Vector3(0f, 0.85f * bodyScale, 0f);
         }
 
         renderers = GetComponentsInChildren<Renderer>();
@@ -79,17 +140,55 @@ public class Enemy : MonoBehaviour
             if (d < best) { best = d; target = p; }
         }
 
+        // Лезет из пропасти: только вверх, пока не выберется на край
+        if (climbing)
+        {
+            // Сначала вверх по обрыву, потом (уже наверху) переползаем через край, пока под ногами не будет земли
+            bool atTop = transform.position.y >= climbTop;
+            Vector3 over = Vector3.zero;
+            if (atTop && path != null && path.Length > 0)
+            {
+                over = path[0] - transform.position; over.y = 0f;
+                over = over.sqrMagnitude > 0.01f ? over.normalized : Vector3.back;
+                transform.rotation = Quaternion.LookRotation(over);
+            }
+            else if (atTop) over = Vector3.back;
+            cc.Move(((atTop ? Vector3.zero : Vector3.up * climbSpeed) + over * speed + knock) * Time.deltaTime);
+            knock = Vector3.MoveTowards(knock, Vector3.zero, 20f * Time.deltaTime);
+            if (visual != null) visual.localRotation = Quaternion.Euler(atTop ? -20f : -70f, 0f, 0f);
+            if (atTop && Physics.Raycast(transform.position + Vector3.up * 0.5f, Vector3.down, out RaycastHit ground, 1.5f, ~(1 << 2), QueryTriggerInteraction.Ignore)
+                && ground.collider.GetComponentInParent<Enemy>() == null)
+            {
+                climbing = false; // под ногами земля — дальше идёт как обычно
+                verticalVelocity = 0f;
+                if (visual != null) visual.localRotation = Quaternion.identity;
+            }
+            HealthFraction = Health / maxHealth;
+            return;
+        }
+
         Vector3 goal;
         if (target != null) goal = target.transform.position;
         else
         {
-            // У деревни — выбираем ближайшую постройку и ломаем её
-            if (Vector3.Distance(transform.position, villageCenter) < 18f)
+            // Идём по точкам дороги, на последней — ломаем деревню
+            Vector3 wp = villageCenter;
+            if (path != null && pathIndex < path.Length)
             {
-                if (targetPiece == null || !targetPiece.gameObject.activeInHierarchy) targetPiece = NearestPiece(20f);
-                goal = targetPiece != null ? targetPiece.Center : villageCenter;
+                wp = path[pathIndex] + Vector3.right * sideOffset;
+                Vector3 d = wp - transform.position; d.y = 0f;
+                if (d.magnitude < 4f || transform.position.z < wp.z - 1f) pathIndex++; // дошли или уже прошли
             }
-            else goal = villageCenter;
+            if (path == null || pathIndex >= path.Length)
+            {
+                if (Vector3.Distance(transform.position, villageCenter) < 22f)
+                {
+                    if (targetPiece == null || !targetPiece.isActiveAndEnabled) targetPiece = NearestPiece(24f);
+                    wp = targetPiece != null ? targetPiece.Center : villageCenter;
+                }
+                else wp = villageCenter;
+            }
+            goal = wp;
         }
 
         Vector3 to = goal - transform.position; to.y = 0f;
@@ -98,7 +197,19 @@ public class Enemy : MonoBehaviour
         if (Time.time < detourUntil) dir = detourDir;
 
         bool moving = true;
-        if (target != null && dist < attackRange)
+        if (target != null && shootRange > 0f && dist > attackRange + 1.5f && dist < shootRange)
+        {
+            // Плевальщик: держит расстояние и плюётся
+            if (dist < preferRange) moving = false;
+            if (Time.time >= nextShot)
+            {
+                nextShot = Time.time + shootCooldown;
+                lunge = 1f;
+                EnemyManager.Spit(transform.position + Vector3.up * 1.4f * bodyScale + dir * 0.6f,
+                                  target.transform.position + Vector3.up * 0.6f, playerDamage);
+            }
+        }
+        else if (target != null && dist < attackRange)
         {
             moving = false;
             if (Time.time >= nextAttack)
@@ -133,12 +244,27 @@ public class Enemy : MonoBehaviour
             }
         }
 
+        // Застрял (упёрся во что-то не ломаемое) — пробуем в сторону
+        if (moving && Time.time >= detourUntil)
+        {
+            Vector3 moved = transform.position - lastPos; moved.y = 0f;
+            stuckTime = moved.magnitude < speed * Time.deltaTime * 0.2f ? stuckTime + Time.deltaTime : 0f;
+            if (stuckTime > 1f)
+            {
+                stuckTime = 0f;
+                detourDir = Quaternion.Euler(0f, Random.value < 0.5f ? -90f : 90f, 0f) * dir;
+                detourUntil = Time.time + 1.5f;
+            }
+        }
+        lastPos = transform.position;
+
         if (cc.isGrounded && verticalVelocity < 0f) verticalVelocity = -2f;
         verticalVelocity += -20f * Time.deltaTime;
-        Vector3 v = (moving ? dir * speed : Vector3.zero) + Vector3.up * verticalVelocity;
+        Vector3 v = (moving ? dir * speed : Vector3.zero) + Vector3.up * verticalVelocity + knock;
+        knock = Vector3.MoveTowards(knock, Vector3.zero, 25f * Time.deltaTime);
         cc.Move(v * Time.deltaTime);
 
-        if (dir.sqrMagnitude > 0.01f)
+        if (dir.sqrMagnitude > 0.01f && knock.sqrMagnitude < 4f)
             transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(dir), 8f * Time.deltaTime);
 
         HealthFraction = Health / maxHealth;
@@ -151,15 +277,17 @@ public class Enemy : MonoBehaviour
         foreach (BuildPiece p in BuildPiece.All)
         {
             float d = Vector3.Distance(p.transform.position, transform.position);
+            if (!p.village) d += 8f; // больше любят ломать дома деревни
             if (d < bestD) { bestD = d; best = p; }
         }
         return best;
     }
 
     // ---------- Копия у остальных игроков ----------
-    public void SetNetState(Vector3 pos, float yaw, float hpFrac)
+    public void SetNetState(Vector3 pos, float yaw, float hpFrac, bool climb)
     {
         if (Simulated) return;
+        if (visual != null) visual.localRotation = climb ? Quaternion.Euler(-70f, 0f, 0f) : Quaternion.identity;
         netPos = pos;
         netYaw = yaw;
         if (hpFrac < HealthFraction) flash = 1f;

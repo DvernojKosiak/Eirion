@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-// Источник ресурсов в мире: дерево (рубить топором) или камень (бить киркой).
+// Источник ресурсов в мире: дерево (рубить топором), камень или кристалл лайлилиума (бить киркой).
 // Каждый удар даёт немного ресурса, последний — бонус. Дерево падает, камень рассыпается.
 // Удары идут через BuildingManager, чтобы у всех игроков было одинаково.
 public class ResourceNode : MonoBehaviour
@@ -45,7 +45,7 @@ public class ResourceNode : MonoBehaviour
         if (broken) return;
         HitsLeft = hitsLeft;
         shake = 1f;
-        if (resource == ResourceType.Stone) // камень становится меньше
+        if (resource != ResourceType.Wood) // камень и кристалл становятся меньше
             transform.localScale = baseScale * Mathf.Lerp(0.45f, 1f, (float)hitsLeft / maxHits);
         if (hitsLeft <= 0) Break();
     }

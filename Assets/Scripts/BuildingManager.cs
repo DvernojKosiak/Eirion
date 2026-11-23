@@ -8,18 +8,17 @@ using UnityEngine;
 // Сеть: игрок просит -> хост делает -> хост рассылает всем, и у всех происходит то же самое.
 // У каждой детали и каждого дерева/камня есть номер (netId), одинаковый у всех игроков.
 // Кто зашёл позже — получает от хоста список изменений.
-// Ещё хост проверяет опору: если деталь ни через что не связана с землёй — она рушится.
+// Ещё хост проверяет опору: если деталь ни через что не связана с землёй (скалой, плато) —
+// она по-настоящему падает и разбивается.
 public class BuildingManager : MonoBehaviour
 {
     public static BuildingManager Instance { get; private set; }
 
     public List<BuildPiece> catalog = new List<BuildPiece>(); // все виды деталей
-    [Tooltip("Деталь стоит на земле, если её низ ниже этой высоты")]
-    public float groundHeight = 0.2f;
 
     const ulong NoOne = Net.NoOne;
     const string MsgPlaceReq = "E.placeReq", MsgDismReq = "E.dismReq", MsgPickReq = "E.pickReq", MsgNodeReq = "E.nodeReq";
-    const string MsgPlace = "E.place", MsgRemove = "E.remove", MsgGive = "E.give", MsgNodeHit = "E.nodeHit", MsgSync = "E.sync";
+    const string MsgPlace = "E.place", MsgRemove = "E.remove", MsgGive = "E.give", MsgNodeHit = "E.nodeHit", MsgSync = "E.sync", MsgFall = "E.fall", MsgHp = "E.hp", MsgRepairReq = "E.repReq";
 
     int nextId = 100000; // номера для новых деталей (детали сцены — от 1)
     bool stabilityDirty;
@@ -94,6 +93,32 @@ public class BuildingManager : MonoBehaviour
         if (m == null || piece == null || !Net.IsHost) return;
         piece.ApplyDamage(amount);
         if (piece.Health <= 0f) m.ServerRemove(piece.netId, true, NoOne);
+        else m.SendHealth(piece);
+    }
+
+    // Починка: +25% прочности. Ресурс игрок уже потратил у себя
+    public static void RequestRepair(BuildPiece piece)
+    {
+        if (Instance == null || piece == null) return;
+        if (Net.IsHost) { Instance.ServerRepair(piece.netId); return; }
+        FastBufferWriter w = Net.Writer(16);
+        try { w.WriteValueSafe(piece.netId); Net.ToHost(MsgRepairReq, w); }
+        finally { w.Dispose(); }
+    }
+
+    void ServerRepair(int id)
+    {
+        if (!BuildPiece.ById.TryGetValue(id, out BuildPiece p)) return;
+        p.SetHealth(p.Health + p.maxHealth * 0.25f);
+        SendHealth(p);
+    }
+
+    void SendHealth(BuildPiece p)
+    {
+        if (!Net.Online) return;
+        FastBufferWriter w = Net.Writer(16);
+        try { w.WriteValueSafe(p.netId); w.WriteValueSafe(p.Health); Net.ToAllClients(MsgHp, w); }
+        finally { w.Dispose(); }
     }
 
     // ================= Подписка на сообщения =================
@@ -125,6 +150,13 @@ public class BuildingManager : MonoBehaviour
             r.ReadValueSafe(out int id); r.ReadValueSafe(out bool debris); r.ReadValueSafe(out ulong dropFor);
             if (!Net.IsHost) LocalRemove(id, debris, dropFor);
         });
+        cmm.RegisterNamedMessageHandler(MsgHp, (sender, r) =>
+        {
+            r.ReadValueSafe(out int id); r.ReadValueSafe(out float hp);
+            if (!Net.IsHost && BuildPiece.ById.TryGetValue(id, out BuildPiece p)) p.SetHealth(hp);
+        });
+        cmm.RegisterNamedMessageHandler(MsgRepairReq, (sender, r) => { r.ReadValueSafe(out int id); if (Net.IsHost) ServerRepair(id); });
+        cmm.RegisterNamedMessageHandler(MsgFall, (sender, r) => { r.ReadValueSafe(out int id); if (!Net.IsHost) LocalFall(id); });
         cmm.RegisterNamedMessageHandler(MsgGive, (sender, r) => { r.ReadValueSafe(out int idx); LocalGivePiece(idx); });
         cmm.RegisterNamedMessageHandler(MsgNodeHit, (sender, r) =>
         {
@@ -169,6 +201,18 @@ public class BuildingManager : MonoBehaviour
         LocalRemove(id, debris, dropFor);
         FastBufferWriter w = Net.Writer(32);
         try { w.WriteValueSafe(id); w.WriteValueSafe(debris); w.WriteValueSafe(dropFor); Net.ToAllClients(MsgRemove, w); }
+        finally { w.Dispose(); }
+        stabilityDirty = true;
+    }
+
+    // Деталь без опоры падает (у всех одинаково начинает падать, дальше — физика)
+    void ServerFall(int id)
+    {
+        if (!BuildPiece.ById.ContainsKey(id)) return;
+        if (!placed.Remove(id)) removedSceneIds.Add(id);
+        LocalFall(id);
+        FastBufferWriter w = Net.Writer(16);
+        try { w.WriteValueSafe(id); Net.ToAllClients(MsgFall, w); }
         finally { w.Dispose(); }
         stabilityDirty = true;
     }
@@ -227,10 +271,15 @@ public class BuildingManager : MonoBehaviour
         if (!BuildPiece.ById.TryGetValue(id, out BuildPiece piece)) return;
         if (debris && dropFor != NoOne && dropFor == Net.LocalId)
         {
-            ResourcePickup.Spawn(ResourceType.Wood, piece.costWood, piece.Center);
-            ResourcePickup.Spawn(ResourceType.Stone, piece.costStone, piece.Center);
+            for (int i = 0; i < piece.costTypes.Length && i < piece.costAmounts.Length; i++)
+                ResourcePickup.Spawn(piece.costTypes[i], piece.costAmounts[i], piece.Center);
         }
         piece.Remove(debris);
+    }
+
+    void LocalFall(int id)
+    {
+        if (BuildPiece.ById.TryGetValue(id, out BuildPiece piece)) piece.Fall();
     }
 
     void LocalGivePiece(int idx)
@@ -262,15 +311,15 @@ public class BuildingManager : MonoBehaviour
         var supported = new HashSet<BuildPiece>();
         var queue = new Queue<BuildPiece>();
         foreach (BuildPiece p in BuildPiece.All)
-            if (p.transform.position.y < groundHeight) { supported.Add(p); queue.Enqueue(p); }
+            if (p.IsGrounded()) { supported.Add(p); queue.Enqueue(p); }
         while (queue.Count > 0)
             foreach (BuildPiece n in queue.Dequeue().GetNeighbours())
                 if (supported.Add(n)) queue.Enqueue(n);
         var falling = new List<int>();
         foreach (BuildPiece p in BuildPiece.All)
             if (!supported.Contains(p)) falling.Add(p.netId);
-        // Рухнувшее просто рассыпается (без ресурсов) — стройте с опорой!
-        foreach (int id in falling) ServerRemove(id, true, NoOne);
+        // Без опоры — падает и разбивается (ресурсы не возвращаются) — стройте с опорой!
+        foreach (int id in falling) ServerFall(id);
     }
 
     // Если сцена старая (нет меню и сети) — пишем крупно, что делать

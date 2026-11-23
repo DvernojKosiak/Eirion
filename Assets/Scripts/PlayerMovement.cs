@@ -17,13 +17,24 @@ public class PlayerMovement : MonoBehaviour
     [Header("Пинать предметы")]
     public float pushPower = 2f;     // с какой силой толкаем обломки и ресурсы
 
+    [Header("Выносливость и падение")]
+    public float sprintCost = 14f;     // в секунду бега
+    public float jumpCost = 10f;
+    public float safeFallSpeed = 13.5f; // быстрее — урон
+    public float fallDamage = 6f;
+
     CharacterController controller;
+    PlayerHealth health;
     float verticalVelocity;          // скорость вверх/вниз
 
     void Awake()
     {
         controller = GetComponent<CharacterController>();
     }
+
+    // После смерти/возрождения начинаем с нуля (иначе посчитает падение с прошлого места)
+    void OnEnable() { verticalVelocity = 0f; }
+    public void ResetFall() { verticalVelocity = 0f; }
 
     void Update()
     {
@@ -40,20 +51,31 @@ public class PlayerMovement : MonoBehaviour
 
         // 2. Направление — относительно того, куда смотрит герой
         Vector3 move = transform.forward * input.y + transform.right * input.x;
-        float speed = kb.leftShiftKey.isPressed ? sprintSpeed : walkSpeed;
+        // Бег тратит выносливость. Кончилась — идёшь шагом. С поднятым блоком — медленно.
+        if (health == null) health = GetComponent<PlayerHealth>();
+        bool sprint = kb.leftShiftKey.isPressed && input.sqrMagnitude > 0.01f &&
+                      (health == null || health.UseStamina(sprintCost * Time.deltaTime, true));
+        float speed = sprint ? sprintSpeed : walkSpeed;
+        if (health != null && health.IsBlocking) speed *= 0.5f;
 
         // 3. Прыжок и гравитация
         if (controller.isGrounded && verticalVelocity < 0)
             verticalVelocity = -2f; // слегка прижимаем к земле
 
-        if (controller.isGrounded && kb.spaceKey.wasPressedThisFrame)
+        if (controller.isGrounded && kb.spaceKey.wasPressedThisFrame && (health == null || health.UseStamina(jumpCost, false)))
             verticalVelocity = Mathf.Sqrt(jumpHeight * -2f * gravity);
 
         verticalVelocity += gravity * Time.deltaTime;
 
         // 4. Двигаем героя
         Vector3 velocity = move * speed + Vector3.up * verticalVelocity;
+        bool wasGrounded = controller.isGrounded;
+        float fallSpeed = -verticalVelocity;
         controller.Move(velocity * Time.deltaTime);
+
+        // 5. Урон от падения: с высоты больше ~4.5 м больно, с 12 м — почти смерть
+        if (!wasGrounded && controller.isGrounded && fallSpeed > safeFallSpeed && health != null)
+            health.TakeDamage((fallSpeed - safeFallSpeed) * fallDamage, "Разбился при падении", false);
     }
 
     // Unity вызывает это, когда герой во что-то врезается при движении.

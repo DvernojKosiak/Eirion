@@ -12,9 +12,12 @@ public class PlayerCombat : MonoBehaviour
     public float pushForce = 6f;
     public float swordDamage = 25f;
     public float otherToolDamage = 12f;
+    public float swordStamina = 12f;   // сколько выносливости на взмах
+    public float toolStamina = 6f;
 
     Camera cam;
     PlayerHotbar hotbar;
+    PlayerHealth health;
     float nextHitTime;
     float swing;
     Transform swingModel;
@@ -30,6 +33,7 @@ public class PlayerCombat : MonoBehaviour
     {
         cam = Camera.main;
         hotbar = GetComponent<PlayerHotbar>();
+        health = GetComponent<PlayerHealth>();
     }
 
     void Update()
@@ -53,12 +57,17 @@ public class PlayerCombat : MonoBehaviour
 
         Mouse mouse = Mouse.current;
         if (tool != Tool.Hammer && mouse != null && Cursor.lockState == CursorLockMode.Locked &&
-            mouse.leftButton.wasPressedThisFrame && Time.time >= nextHitTime)
+            mouse.leftButton.wasPressedThisFrame && Time.time >= nextHitTime && (health == null || !health.IsBlocking))
         {
+            if (health != null && !health.UseStamina(tool == Tool.Sword ? swordStamina : toolStamina, false))
+            {
+                Say("Нет сил — передохни");
+                return;
+            }
             nextHitTime = Time.time + cooldown;
             PlaySwing();
             if (lookedEnemy != null)
-                EnemyManager.RequestHit(lookedEnemy, tool == Tool.Sword ? swordDamage : otherToolDamage);
+                EnemyManager.RequestHit(lookedEnemy, tool == Tool.Sword ? swordDamage : otherToolDamage, transform.position);
             else if (lookedNode != null)
             {
                 if (tool == lookedNode.requiredTool) BuildingManager.RequestHitNode(lookedNode);

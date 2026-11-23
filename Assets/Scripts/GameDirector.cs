@@ -126,8 +126,8 @@ public class GameDirector : MonoBehaviour
         if (moon != null) moon.intensity = 0.28f * dark;
 
         RenderSettings.fogColor = Color.Lerp(fogDay, new Color(0.04f, 0.05f, 0.09f), dark);
-        RenderSettings.ambientIntensity = Mathf.Lerp(1f, 0.35f, dark);
-        if (skybox != null && skybox.HasProperty("_Exposure")) skybox.SetFloat("_Exposure", Mathf.Lerp(1.3f, 0.12f, dark));
+        RenderSettings.ambientIntensity = Mathf.Lerp(0.85f, 0.3f, dark);
+        if (skybox != null && skybox.HasProperty("_Exposure")) skybox.SetFloat("_Exposure", Mathf.Lerp(1.0f, 0.1f, dark));
 
         bool lit = Hour >= 19f || Hour < 7f;
         if (torches != null) foreach (Torch t in torches) if (t != null) t.SetLit(lit);

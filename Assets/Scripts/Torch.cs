@@ -1,10 +1,11 @@
 using UnityEngine;
 
-// Факел: ночью горит, днём гаснет (включает GameDirector).
+// Факел: ночью горит, днём гаснет (включает GameDirector). В подземелье (always) горит всегда.
 public class Torch : MonoBehaviour
 {
     public Light torchLight;
     public Renderer flame;
+    public bool always;
 
     float baseIntensity;
 
@@ -15,6 +16,7 @@ public class Torch : MonoBehaviour
 
     public void SetLit(bool lit)
     {
+        if (always) lit = true;
         if (torchLight != null) torchLight.enabled = lit;
         if (flame != null) flame.enabled = lit;
     }

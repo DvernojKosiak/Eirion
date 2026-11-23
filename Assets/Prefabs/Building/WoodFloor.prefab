@@ -51,9 +51,13 @@ MonoBehaviour:
   category: "\u0414\u0435\u0440\u0435\u0432\u043E"
   maxHealth: 200
   size: {x: 4, y: 0.3, z: 4}
-  costWood: 3
-  costStone: 0
+  costTypes: 02000000i
+  costAmounts: 04000000i
+  requiredStation: 1
+  station: 0
   buildable: 1
+  village: 0
+  locked: 0
 --- !u!1 &8902665208573690386
 GameObject:
   m_ObjectHideFlags: 0

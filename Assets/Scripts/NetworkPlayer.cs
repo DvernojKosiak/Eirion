@@ -9,7 +9,7 @@ public class NetworkPlayer : NetworkBehaviour
     public Behaviour[] ownerOnly;          // скрипты, которые работают только у своего игрока
     public Transform cameraPivot;          // «голова», куда сажаем камеру
     public Renderer bodyRenderer;          // тело — красим в цвет игрока
-    public Vector3 spawnPoint = new Vector3(0f, 1.1f, -12f);
+    public Vector3 spawnPoint = new Vector3(6f, 5.2f, -10f);
 
     // Что в руке (меч/молот) — чтобы другие видели
     readonly NetworkVariable<int> tool = new NetworkVariable<int>(0,

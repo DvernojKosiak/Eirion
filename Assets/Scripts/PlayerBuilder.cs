@@ -4,8 +4,8 @@ using UnityEngine.InputSystem;
 
 // Молот (клавиша 2) — строительство.
 //   Tab        — меню построек (выбрать деталь мышкой)
-//   Q / E      — быстро листать детали
 //   R          — повернуть на 90°
+//   Деревянное строится только рядом с верстаком, каменное — рядом с каменотёсом
 //   ЛКМ        — поставить (берётся из инвентаря, если есть, иначе тратятся ресурсы)
 //   ПКМ (держать) — разобрать деталь под прицелом, выпадут ресурсы
 //   F          — взять деталь целиком в руки, чтобы поставить в другом месте
@@ -16,6 +16,7 @@ public class PlayerBuilder : MonoBehaviour
     public float reach = 12f;
     public float gridSize = 1f;
     public float dismantleTime = 1.2f; // сколько держать ПКМ
+    public float stationRadius = 30f;  // как далеко можно строить от станка
 
     public bool IsBuilding => hotbar == null || hotbar.Current == Tool.Hammer;
 
@@ -32,6 +33,7 @@ public class PlayerBuilder : MonoBehaviour
     int ghostFor = -1;
     Material ghostMat;
     bool canPlace;
+    bool stationOk;
     Vector3 placePos;
 
     BuildPiece looked;
@@ -77,6 +79,7 @@ public class PlayerBuilder : MonoBehaviour
 
         // Меню построек
         if (kb.tabKey.wasPressedThisFrame) { if (menuOpen) CloseMenu(true); else OpenMenu(); }
+        if (menuOpen && !Panels.Is("build")) menuOpen = false;
         if (menuOpen && kb.escapeKey.wasPressedThisFrame) CloseMenu(false);
         if (menuOpen)
         {
@@ -84,13 +87,15 @@ public class PlayerBuilder : MonoBehaviour
             return;
         }
 
-        if (kb.qKey.wasPressedThisFrame) selected = (selected - 1 + pieces.Count) % pieces.Count;
-        if (kb.eKey.wasPressedThisFrame) selected = (selected + 1) % pieces.Count;
         if (kb.rKey.wasPressedThisFrame) yaw = (yaw + 90f) % 360f;
         if (ghostFor != selected) MakeGhost();
 
         bool locked = Cursor.lockState == CursorLockMode.Locked;
         looked = AimHelper.LookedPiece(cam, transform, reach);
+        repairTarget = looked;
+
+        // --- Починить: G (+25% прочности за 1 ресурс, из которого сделана деталь). Деревню чинить можно!
+        if (locked && kb.gKey.wasPressedThisFrame && repairTarget != null) TryRepair(repairTarget);
         if (looked != null && looked.locked)
         {
             if ((mouse.rightButton.wasPressedThisFrame || kb.fKey.wasPressedThisFrame) && locked) Say("Это деревня — её разбирать нельзя, её надо защищать!");
@@ -128,6 +133,12 @@ public class PlayerBuilder : MonoBehaviour
         if (locked && mouse.leftButton.wasPressedThisFrame && canPlace)
         {
             BuildPiece p = pieces[selected];
+            bool hasInHands = inventory != null && inventory.PieceCount(p.pieceId) > 0;
+            if (!stationOk && !hasInHands)
+            {
+                Say("Нужен " + BuildPiece.StationName(p.requiredStation).ToLower() + " рядом (до " + stationRadius + " м)");
+                return;
+            }
             bool fromHands = inventory != null && inventory.TakePiece(p.pieceId);
             if (fromHands || inventory == null || inventory.Spend(p))
             {
@@ -141,10 +152,22 @@ public class PlayerBuilder : MonoBehaviour
     // Деталь, которую мы взяли, пришла в руки
     public void ReceivePiece(BuildPiece prefab)
     {
-        if (inventory != null) inventory.AddPiece(prefab.pieceId);
+        if (inventory != null) inventory.AddPiece(prefab.pieceId, prefab.displayName);
         int index = pieces.FindIndex(p => p.pieceId == prefab.pieceId);
         if (index >= 0) selected = index;
         Say("Взял: " + prefab.displayName);
+    }
+
+    BuildPiece repairTarget;
+
+    void TryRepair(BuildPiece p)
+    {
+        if (p.Health >= p.maxHealth - 0.5f) { Say("Целая — чинить не надо"); return; }
+        if (p.costTypes.Length == 0) { BuildingManager.RequestRepair(p); return; }
+        ResourceType t = p.costTypes[0];
+        if (inventory != null && !inventory.Take(t, 1)) { Say("Для починки нужен 1 ресурс: " + ResourcePickup.Name(t).ToLower()); return; }
+        BuildingManager.RequestRepair(p);
+        if (combat != null) combat.PlaySwing();
     }
 
     void Say(string text) { message = text; messageUntil = Time.time + 2f; }
@@ -205,10 +228,12 @@ public class PlayerBuilder : MonoBehaviour
         Vector3 center = p + Vector3.up * (piece.size.y * 0.5f);
         canPlace = !Physics.CheckBox(center, piece.size * 0.4f, rot, ~(1 << 2), QueryTriggerInteraction.Ignore);
 
-        bool affordable = inventory == null || inventory.PieceCount(piece.pieceId) > 0 || inventory.CanAfford(piece);
+        bool inHands = inventory != null && inventory.PieceCount(piece.pieceId) > 0;
+        bool affordable = inventory == null || inHands || inventory.CanAfford(piece);
+        stationOk = PlayerInteract.StationNear(piece.requiredStation, p, stationRadius);
         if (ghostMat != null)
         {
-            Color c = canPlace && affordable ? Ok : Bad;
+            Color c = canPlace && affordable && (stationOk || inHands) ? Ok : Bad;
             ghostMat.SetColor("_BaseColor", c);
             ghostMat.SetColor("_Color", c);
         }
@@ -216,22 +241,15 @@ public class PlayerBuilder : MonoBehaviour
 
     void OpenMenu()
     {
+        if (!Panels.Open("build")) return;
         menuOpen = true;
         if (menuTab == null) menuTab = pieces[selected].category;
-        PlayerCamera.BlockCursorLock = true;
-        Cursor.lockState = CursorLockMode.None;
-        Cursor.visible = true;
     }
 
     void CloseMenu(bool relock)
     {
         menuOpen = false;
-        PlayerCamera.BlockCursorLock = false;
-        if (relock)
-        {
-            Cursor.lockState = CursorLockMode.Locked;
-            Cursor.visible = false;
-        }
+        Panels.Close("build", relock);
     }
 
     void OnGUI()
@@ -244,15 +262,20 @@ public class PlayerBuilder : MonoBehaviour
         BuildPiece cur = pieces[selected];
         int have = inventory != null ? inventory.PieceCount(cur.pieceId) : 0;
         string info = cur.displayName + "  ·  " + (have > 0 ? "в руках: " + have : cur.CostText);
+        if (have == 0 && !stationOk && cur.requiredStation != StationType.None)
+            info += "  ·  нужен " + BuildPiece.StationName(cur.requiredStation).ToLower() + " рядом";
         GUI.Label(new Rect(0, Screen.height - 112, Screen.width, 26), info, Hud.Center);
         GUI.Label(new Rect(0, Screen.height - 88, Screen.width, 22),
-                  "Tab — постройки   R — повернуть   ЛКМ — поставить   ПКМ (держать) — разобрать   F — взять в руки", Hud.CenterTiny);
+                  "Tab — постройки   R — повернуть   ЛКМ — поставить   ПКМ (держать) — разобрать   F — взять   G — починить", Hud.CenterTiny);
 
         // Что под прицелом
-        if (looked != null)
+        BuildPiece shown = looked != null ? looked : repairTarget;
+        if (shown != null)
         {
             Rect r = new Rect(Screen.width / 2f - 100, Screen.height / 2f + 40, 200, 10);
-            Hud.Bar(r, dismantleProgress, new Color(1f, 0.7f, 0.2f), looked.displayName);
+            if (dismantleProgress > 0f) Hud.Bar(r, dismantleProgress, new Color(1f, 0.7f, 0.2f), shown.displayName);
+            else Hud.Bar(r, shown.Health / shown.maxHealth, new Color(0.4f, 0.85f, 0.4f),
+                         shown.displayName + "  ·  прочность " + Mathf.CeilToInt(shown.Health) + "/" + Mathf.CeilToInt(shown.maxHealth));
         }
 
         if (Time.time < messageUntil)
@@ -268,8 +291,7 @@ public class PlayerBuilder : MonoBehaviour
 
         GUI.Label(new Rect(panel.x + 24, panel.y + 16, 300, 30), "Постройки", Hud.Big);
         if (inventory != null)
-            GUI.Label(new Rect(panel.xMax - 320, panel.y + 22, 300, 24),
-                      "Дерево: " + inventory.wood + "     Камень: " + inventory.stone, Hud.Small);
+            GUI.Label(new Rect(panel.x + 200, panel.y + 24, W - 224, 24), inventory.Summary(), Hud.Tiny);
 
         // Вкладки
         var cats = new List<string>();
@@ -304,9 +326,12 @@ public class PlayerBuilder : MonoBehaviour
 
             if (sel) Hud.Fill(new Rect(card.x - 3, card.y - 3, card.width + 6, card.height + 6), new Color(0.95f, 0.75f, 0.25f), 12);
             Hud.Fill(card, card.Contains(Event.current.mousePosition) ? new Color(1f, 1f, 1f, 0.16f) : new Color(1f, 1f, 1f, 0.07f), 10);
-            Hud.Fill(new Rect(card.x, card.y, 6, card.height), p.category == "Камень" ? new Color(0.6f, 0.6f, 0.65f) : new Color(0.6f, 0.42f, 0.22f), 3);
+            Color stripe = p.category == "Камень" ? new Color(0.6f, 0.6f, 0.65f) : p.category == "Станки" ? new Color(0.85f, 0.6f, 0.2f) : new Color(0.6f, 0.42f, 0.22f);
+            Hud.Fill(new Rect(card.x, card.y, 6, card.height), stripe, 3);
 
-            GUI.Label(new Rect(card.x + 16, card.y + 10, card.width - 24, 44), p.displayName, Hud.Title);
+            GUI.Label(new Rect(card.x + 16, card.y + 8, card.width - 24, 44), p.displayName, Hud.Title);
+            if (p.requiredStation != StationType.None)
+                GUI.Label(new Rect(card.x + 16, card.y + card.height - 50, card.width - 24, 20), "у станка: " + BuildPiece.StationName(p.requiredStation).ToLower(), Hud.Tiny);
             Color old = GUI.color;
             GUI.color = have > 0 ? new Color(0.6f, 0.85f, 1f) : afford ? new Color(0.6f, 1f, 0.6f) : new Color(1f, 0.5f, 0.45f);
             GUI.Label(new Rect(card.x + 16, card.y + card.height - 30, card.width - 24, 24), have > 0 ? "в руках: " + have : p.CostText, Hud.Small);

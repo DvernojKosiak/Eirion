@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 
 // Все виды ресурсов в игре
-public enum ResourceType { Wood, Stone, Plank, StoneBlock, Lailillium }
+public enum ResourceType { Wood, Stone, Plank, StoneBlock, Lailillium, Arrow }
 
 // Ресурс, лежащий на земле. Его можно пинать.
 // Подойди поближе — он сам прилетит в инвентарь.
@@ -29,6 +29,7 @@ public class ResourcePickup : MonoBehaviour
             case ResourceType.Stone: return "Камень";
             case ResourceType.Plank: return "Доски";
             case ResourceType.StoneBlock: return "Кам. блок";
+            case ResourceType.Arrow: return "Стрелы";
             default: return "Лайлилиум";
         }
     }
@@ -41,6 +42,7 @@ public class ResourcePickup : MonoBehaviour
             case ResourceType.Stone: return new Color(0.55f, 0.55f, 0.57f);
             case ResourceType.Plank: return new Color(0.78f, 0.6f, 0.36f);
             case ResourceType.StoneBlock: return new Color(0.75f, 0.74f, 0.7f);
+            case ResourceType.Arrow: return new Color(0.85f, 0.8f, 0.65f);
             default: return new Color(0.65f, 0.4f, 1f);
         }
     }
@@ -72,6 +74,7 @@ public class ResourcePickup : MonoBehaviour
             case ResourceType.Wood: go.transform.localScale = new Vector3(0.25f, 0.4f, 0.25f); break;
             case ResourceType.Plank: go.transform.localScale = new Vector3(0.7f, 0.06f, 0.25f); break;
             case ResourceType.Lailillium: go.transform.localScale = new Vector3(0.15f, 0.35f, 0.15f); break;
+            case ResourceType.Arrow: go.transform.localScale = new Vector3(0.05f, 0.05f, 0.8f); break;
             default: go.transform.localScale = Vector3.one * 0.35f; break;
         }
         if (type == ResourceType.Wood)

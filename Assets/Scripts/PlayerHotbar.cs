@@ -1,9 +1,9 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-public enum Tool { Sword, Hammer, Axe, Pickaxe }
+public enum Tool { Sword, Hammer, Axe, Pickaxe, Bow }
 
-// Панель предметов внизу экрана: 1 — меч, 2 — молот, 3 — топор, 4 — кирка.
+// Панель предметов внизу экрана: 1 — меч, 2 — молот, 3 — топор, 4 — кирка, 5 — лук.
 // Показывает в руке нужную модель.
 public class PlayerHotbar : MonoBehaviour
 {
@@ -11,8 +11,9 @@ public class PlayerHotbar : MonoBehaviour
     public Transform hammerModel;
     public Transform axeModel;
     public Transform pickaxeModel;
+    public Transform bowModel;
 
-    static readonly string[] names = { "Меч", "Молот", "Топор", "Кирка" };
+    static readonly string[] names = { "Меч", "Молот", "Топор", "Кирка", "Лук" };
 
     public Tool Current { get; private set; } = Tool.Sword;
 
@@ -26,6 +27,7 @@ public class PlayerHotbar : MonoBehaviour
         if (kb.digit2Key.wasPressedThisFrame) Select(Tool.Hammer);
         if (kb.digit3Key.wasPressedThisFrame) Select(Tool.Axe);
         if (kb.digit4Key.wasPressedThisFrame) Select(Tool.Pickaxe);
+        if (kb.digit5Key.wasPressedThisFrame) Select(Tool.Bow);
     }
 
     void Select(Tool t) { Current = t; ShowTool(t); }
@@ -39,6 +41,7 @@ public class PlayerHotbar : MonoBehaviour
             case Tool.Sword: return swordModel;
             case Tool.Hammer: return hammerModel;
             case Tool.Axe: return axeModel;
+            case Tool.Bow: return bowModel;
             default: return pickaxeModel;
         }
     }

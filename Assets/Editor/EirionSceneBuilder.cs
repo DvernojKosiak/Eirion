@@ -1135,7 +1135,9 @@ public static class EirionSceneBuilder
         sword.transform.SetParent(pivot.transform, false);
         sword.transform.localPosition = new Vector3(0.45f, -0.35f, 0.55f);
         sword.transform.localRotation = Quaternion.Euler(60f, 0f, 0f);
-        Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, 0.45f, 0f), new Vector3(0.06f, 0.8f, 0.02f), steel, Vector3.zero, false);
+        // клинок длинный (1.4 м): бьёт ровно то, что видно на экране
+        Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, 0.78f, 0f), new Vector3(0.07f, 1.4f, 0.02f), steel, Vector3.zero, false);
+        Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, 1.5f, 0f), new Vector3(0.045f, 0.06f, 0.018f), steel, new Vector3(0f, 0f, 45f), false); // остриё
         Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, 0.04f, 0f), new Vector3(0.25f, 0.04f, 0.05f), darkWood, Vector3.zero, false);
         Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, -0.08f, 0f), new Vector3(0.04f, 0.2f, 0.04f), darkWood, Vector3.zero, false);
 
@@ -1163,7 +1165,17 @@ public static class EirionSceneBuilder
         Part(pick.transform, PrimitiveType.Cube, new Vector3(0f, 0.5f, 0f), new Vector3(0.42f, 0.05f, 0.05f), steel, new Vector3(0f, 0f, 8f), false);
         pick.SetActive(false);
 
-        foreach (GameObject tool in new[] { sword, hammer, axe, pick })
+        // Лук: рукоять и два плеча (тетиву и стрелу добавляет PlayerBow)
+        GameObject bow = new GameObject("Bow");
+        bow.transform.SetParent(pivot.transform, false);
+        bow.transform.localPosition = new Vector3(0.32f, -0.28f, 0.6f);
+        bow.transform.localRotation = Quaternion.Euler(0f, 0f, 12f);
+        Part(bow.transform, PrimitiveType.Cube, Vector3.zero, new Vector3(0.05f, 0.22f, 0.06f), darkWood, Vector3.zero, false);
+        Part(bow.transform, PrimitiveType.Cube, new Vector3(0f, 0.32f, -0.05f), new Vector3(0.035f, 0.46f, 0.035f), darkWood, new Vector3(18f, 0f, 0f), false);
+        Part(bow.transform, PrimitiveType.Cube, new Vector3(0f, -0.32f, -0.05f), new Vector3(0.035f, 0.46f, 0.035f), darkWood, new Vector3(-18f, 0f, 0f), false);
+        bow.SetActive(false);
+
+        foreach (GameObject tool in new[] { sword, hammer, axe, pick, bow })
             foreach (Renderer r in tool.GetComponentsInChildren<Renderer>(true))
                 r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
@@ -1172,9 +1184,11 @@ public static class EirionSceneBuilder
         hotbar.hammerModel = hammer.transform;
         hotbar.axeModel = axe.transform;
         hotbar.pickaxeModel = pick.transform;
+        hotbar.bowModel = bow.transform;
 
         Inventory inventory = player.AddComponent<Inventory>();
         PlayerCombat combat = player.AddComponent<PlayerCombat>();
+        PlayerBow bowCtl = player.AddComponent<PlayerBow>();
         PlayerBuilder builder = player.AddComponent<PlayerBuilder>();
         builder.ghostMaterial = ghost;
         builder.pieces = catalog.FindAll(p => p.buildable);
@@ -1182,7 +1196,7 @@ public static class EirionSceneBuilder
         PlayerHealth health = player.AddComponent<PlayerHealth>();
 
         // Управление работает только у своего игрока — включит NetworkPlayer
-        Behaviour[] ownerOnly = { movement, pcam, hotbar, inventory, combat, builder, interact, health };
+        Behaviour[] ownerOnly = { movement, pcam, hotbar, inventory, combat, bowCtl, builder, interact, health };
         foreach (Behaviour b in ownerOnly) b.enabled = false;
 
         NetworkPlayer np = player.AddComponent<NetworkPlayer>();

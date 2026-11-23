@@ -37,7 +37,8 @@ public class EnemyManager : MonoBehaviour
     public class PlayerInfo { public Transform transform; public ulong ownerId; public bool dead; }
 
     const string MsgState = "E.enemies", MsgHitReq = "E.enemyHit", MsgHurt = "E.hurt", MsgWaveReq = "E.waveReq", MsgSpit = "E.spit",
-                 MsgParryReq = "E.parry", MsgGrabReq = "E.grab", MsgGrabRes = "E.grabRes", MsgThrowReq = "E.throw", MsgFx = "E.fx", MsgReact = "E.react";
+                 MsgParryReq = "E.parry", MsgGrabReq = "E.grab", MsgGrabRes = "E.grabRes", MsgThrowReq = "E.throw", MsgFx = "E.fx", MsgReact = "E.react",
+                 MsgArrowReq = "E.arrowReq", MsgArrow = "E.arrow";
 
     readonly Dictionary<int, Enemy> enemies = new Dictionary<int, Enemy>();
     readonly List<PlayerInfo> players = new List<PlayerInfo>();
@@ -379,6 +380,26 @@ public class EnemyManager : MonoBehaviour
         }
     }
 
+    // ---------- Стрелы ----------
+    // Стрелок сам решает, во что попала его стрела (урон всё равно идёт через хоста). Остальным — летящая картинка.
+    public static void ShootArrow(Vector3 origin, Vector3 vel, bool heavy, Transform shooterRoot)
+    {
+        Arrow.Spawn(origin, vel, true, heavy, shooterRoot, true);
+        if (!Net.Online) return;
+        if (Net.IsHost) SendArrow(origin, vel, heavy, Net.LocalId);
+        else
+        {
+            FastBufferWriter w = Net.Writer(48);
+            try { w.WriteValueSafe(origin); w.WriteValueSafe(vel); w.WriteValueSafe(heavy); Net.ToHost(MsgArrowReq, w); } finally { w.Dispose(); }
+        }
+    }
+
+    static void SendArrow(Vector3 origin, Vector3 vel, bool heavy, ulong shooter)
+    {
+        FastBufferWriter w = Net.Writer(56);
+        try { w.WriteValueSafe(origin); w.WriteValueSafe(vel); w.WriteValueSafe(heavy); w.WriteValueSafe(shooter); Net.ToAllClients(MsgArrow, w); } finally { w.Dispose(); }
+    }
+
     // ---------- Плевки ----------
     public static void Spit(Vector3 from, Vector3 to, float damage)
     {
@@ -479,6 +500,21 @@ public class EnemyManager : MonoBehaviour
         {
             r.ReadValueSafe(out Vector3 from); r.ReadValueSafe(out Vector3 to);
             if (!Net.IsHost) Projectile.Launch(from, to, false, 0f);
+        });
+        cmm.RegisterNamedMessageHandler(MsgArrowReq, (sender, r) =>
+        {
+            r.ReadValueSafe(out Vector3 o); r.ReadValueSafe(out Vector3 v); r.ReadValueSafe(out bool hv);
+            if (!Net.IsHost) return;
+            Transform t = PlayerTransform(sender);
+            Arrow.Spawn(o, v, false, hv, t != null ? t.root : null, false);
+            SendArrow(o, v, hv, sender);
+        });
+        cmm.RegisterNamedMessageHandler(MsgArrow, (sender, r) =>
+        {
+            r.ReadValueSafe(out Vector3 o); r.ReadValueSafe(out Vector3 v); r.ReadValueSafe(out bool hv); r.ReadValueSafe(out ulong shooter);
+            if (shooter == Net.LocalId) return;
+            Transform t = PlayerTransform(shooter);
+            Arrow.Spawn(o, v, false, hv, t != null ? t.root : null, false);
         });
         cmm.RegisterNamedMessageHandler(MsgWaveReq, (sender, r) =>
         {

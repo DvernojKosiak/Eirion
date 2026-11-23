@@ -8,6 +8,7 @@ using UnityEngine.InputSystem;
 public class Inventory : MonoBehaviour
 {
     public int startLogs = 10;      // с чем высаживаемся с дирижабля
+    public int startArrows = 20;
     public float pickupRadius = 3f;
 
     readonly Dictionary<ResourceType, int> res = new Dictionary<ResourceType, int>();
@@ -23,6 +24,7 @@ public class Inventory : MonoBehaviour
     void Start()
     {
         Add(ResourceType.Wood, startLogs, false);
+        Add(ResourceType.Arrow, startArrows, false);
     }
 
     // ---------- ресурсы ----------
@@ -178,7 +180,7 @@ public class Inventory : MonoBehaviour
 
     void DrawPanel()
     {
-        float W = Mathf.Min(720f, Screen.width - 40f), H = Mathf.Min(460f, Screen.height - 60f);
+        float W = Mathf.Min(720f, Screen.width - 40f), H = Mathf.Min(560f, Screen.height - 60f);
         Rect panel = new Rect((Screen.width - W) / 2f, (Screen.height - H) / 2f, W, H);
         Hud.Fill(panel, new Color(0.07f, 0.06f, 0.07f, 0.95f), 14);
         GUI.Label(new Rect(panel.x + 24, panel.y + 16, 300, 30), "Сумка", Hud.Big);
@@ -201,7 +203,8 @@ public class Inventory : MonoBehaviour
         }
 
         // Детали, взятые молотом (F)
-        float py = top + tile + gap + 16;
+        int rows = (k + 4) / 5;
+        float py = top + rows * (tile + gap) + 4;
         GUI.Label(new Rect(panel.x + 24, py, 400, 26), "Детали в руках", Hud.Title);
         py += 30;
         float px = panel.x + 24;

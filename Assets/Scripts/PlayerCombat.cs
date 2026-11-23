@@ -2,42 +2,37 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-// Бой. Меч — продолжение камеры.
+// Бой мечом — просто и понятно. Бьёт тот клинок, который видно на экране (длинный, 1.4 м).
 //
-//   ДЕРЖИ ЛКМ — меч выставлен вперёд и ходит вместе с камерой. Води мышью — рубишь.
-//     Чем быстрее движение, тем сильнее удар (полоска под прицелом). Медленно — клинок просто упирается.
-//     Попадает та часть тела, через которую прошёл клинок: голова, рука, нога, туловище.
-//     Клинок ВХОДИТ в тело и остаётся там, пока держишь ЛКМ. Мышь тогда тяжёлая — ты держишь тварь.
-//       води мышью     — пилишь глубже (руку или ногу можно так отпилить)
-//       отпусти ЛКМ    — выдернуть клинок (а если резко повести мышь и отпустить — сбросишь тварь с клинка)
-//       Q              — пнуть тварь с клинка
-//       иди на стену   — тварь на клинке будет пригвождена
-//     Очень быстрый удар по туловищу прорубает и отбрасывает тварь, а не застревает.
-//     Разбег с мечом вперёд (Shift) — колющий удар.
+//   ЛКМ (щелчок)            — удар. Подряд: справа налево, слева направо, третий — сверху (сильнее).
+//   ЛКМ зажать и отпустить  — тяжёлый удар сверху. Клинок входит в тело, видно, как он там сидит, и сам выходит.
+//   Куда смотришь — туда и бьёшь: ниже — по ногам, выше — по голове.
+//   Лёгкий удар по туловищу «вязнет» в теле и проходит дальше. Громилу лёгким не взять — клинок отскакивает.
 //   Q — пинок. G — схватить тварь; пока держишь, видна дуга броска: ЛКМ или G — бросить, Q — через себя.
 //   ПКМ — блок (держи врага в прицеле), Ctrl / C — перекат.
-//   Топор и кирка рубят деревья и бьют камни по щелчку.
+//   Топор и кирка рубят деревья и бьют камни по щелчку. Лук — см. PlayerBow.
 public class PlayerCombat : MonoBehaviour
 {
-    [Header("Клинок")]
-    public float bladeLength = 2.2f;
-    public float minHitSpeed = 4.5f;       // м/с кончика: медленнее — не удар
-    public float heavySpeed = 13f;         // быстрее — сильный удар
-    public float damagePerSpeed = 1.6f;
-    public float maxSpeedForDamage = 26f;
-    public float ripDamage = 15f;
-    public float sawDamage = 7f;
-    public float embeddedLook = 0.3f;      // послушность мыши, пока клинок в теле
+    [Header("Меч")]
+    public float slashDamage = 20f;
+    public float comboEndDamage = 28f;
+    public float heavyDamage = 48f;
+    public float ripDamage = 12f;
+    public float swingTime = 0.36f;        // лёгкий удар целиком (замах, удар, возврат)
+    public float comboEndTime = 0.46f;
+    public float heavyTime = 0.55f;
+    public float chargeTime = 0.35f;       // сколько держать ЛКМ для тяжёлого удара
+    public float embedTime = 0.45f;        // сколько клинок сидит в теле после тяжёлого удара
 
     [Header("Остальное")]
     public float range = 2.8f;
-    public float pushForce = 6f;
     public float kickDamage = 8f;
     public float otherToolDamage = 12f;
     public float throwSpeed = 14f;
 
     [Header("Выносливость")]
-    public float hitStaminaPerDamage = 0.35f;
+    public float swingStamina = 8f;
+    public float heavyStamina = 20f;
     public float kickStamina = 12f;
     public float grabStamina = 15f;
     public float toolStamina = 6f;
@@ -67,30 +62,29 @@ public class PlayerCombat : MonoBehaviour
     Quaternion recoilFrom;
     Vector3 recoilFromPos;
 
-    // Меч в руке
-    bool swordOut;
-    float outBlend, blockBlend;
-    Vector2 lag;                       // клинок чуть отстаёт от камеры — чувствуется вес
+    // Удар мечом
+    bool swinging;
+    float swP, swDur;                  // доля удара 0..1 и его длительность
+    Vector2 swingS;                    // направление удара на экране
+    bool swingHeavy;
+    float swingDamage;
+    int comboStep;
+    float comboUntil;
+    bool queued;
+    bool charging;
+    float pressTime;
+    float dragUntil;                   // клинок «вязнет» в теле
+    float bladeTipY = 1.5f, bladeBaseY = 0.12f;
     readonly Vector3[] prevPts = new Vector3[BladeSamples];
     readonly Vector3[] curPts = new Vector3[BladeSamples];
     bool havePrev;
-    Vector3 lastTip, tipVel;
-    float tipSpeedShown;
-    float blockedUntil;
-    readonly Dictionary<Enemy, float> hitCooldown = new Dictionary<Enemy, float>();
+    readonly HashSet<Enemy> hitThisSwing = new HashSet<Enemy>();
 
-    // Клинок в теле
+    // Клинок в теле (после тяжёлого удара)
     Enemy embedEnemy;
     BodyPart embedPart;
     Vector3 embedLocal;
-    bool embedTorso;
-    float sawAccum;
-
-    // Для «креста»
-    Enemy lastHitEnemy;
-    HitType lastHitType;
-    Vector3 lastHitMotion;
-    float lastHitTime;
+    float embedUntil;
 
     float toolSwing;
     int heldId = -1;
@@ -104,7 +98,7 @@ public class PlayerCombat : MonoBehaviour
 
     readonly List<Enemy> targets = new List<Enemy>();
 
-    public bool IsAttacking => attack != Attack.None || swordOut;
+    public bool IsAttacking => attack != Attack.None || swinging;
     public bool IsHolding => heldId >= 0;
     public bool IsStuck => embedEnemy != null;
 
@@ -120,6 +114,14 @@ public class PlayerCombat : MonoBehaviour
 
         PlayerCamera pc = GetComponentInChildren<PlayerCamera>();
         pivot = pc != null ? pc.transform : (cam != null ? cam.transform : transform);
+
+        // Длина клинка — по модели меча (верх самой высокой детали)
+        if (hotbar != null && hotbar.swordModel != null)
+        {
+            float top = 0f;
+            foreach (Transform c in hotbar.swordModel) top = Mathf.Max(top, c.localPosition.y + c.localScale.y * 0.5f);
+            if (top > 0.3f) bladeTipY = top;
+        }
 
         // Нога для пинка (видна только во время пинка)
         if (pc != null)
@@ -147,7 +149,8 @@ public class PlayerCombat : MonoBehaviour
     void OnDisable()
     {
         attack = Attack.None;
-        swordOut = false;
+        swinging = false;
+        charging = false;
         embedEnemy = null; embedPart = null;
         if (heldId >= 0) heldId = -1;
         if (leg != null) leg.gameObject.SetActive(false);
@@ -162,6 +165,8 @@ public class PlayerCombat : MonoBehaviour
         if (ok) { heldId = id; grabTime = Time.time; Say("Схватил! Целься — ЛКМ бросить, Q — через себя"); }
         else Say("Не получилось схватить");
     }
+
+
 
     void Update()
     {
@@ -188,14 +193,12 @@ public class PlayerCombat : MonoBehaviour
 
         Mouse mouse = Mouse.current;
         Keyboard kb = Keyboard.current;
-        Vector2 md = mouse != null ? mouse.delta.ReadValue() : Vector2.zero;
         bool locked = Cursor.lockState == CursorLockMode.Locked;
-        bool sword = tool == Tool.Sword;
+        bool hasSword = tool == Tool.Sword;
         bool blocking = health != null && health.IsBlocking;
         bool canFight = tool != Tool.Hammer && mouse != null && kb != null && locked;
 
-        // Меч опускается: сменил предмет, поставил блок, схватил тварь
-        if (swordOut && (!canFight || !sword || blocking || IsHolding)) LowerSword();
+        if (!canFight || !hasSword || blocking || IsHolding) charging = false;
 
         if (canFight)
         {
@@ -206,96 +209,109 @@ public class PlayerCombat : MonoBehaviour
             }
             else
             {
-                if (kb.qKey.wasPressedThisFrame && attack == Attack.None) StartAttack(Attack.Kick);
-                if (kb.gKey.wasPressedThisFrame && attack == Attack.None && !IsStuck) TryGrab();
+                bool busy = swinging || IsStuck || attack != Attack.None;
+                if (kb.qKey.wasPressedThisFrame && !busy) StartAttack(Attack.Kick);
+                if (kb.gKey.wasPressedThisFrame && !busy) TryGrab();
 
-                if (sword && !blocking)
+                if (hasSword && !blocking)
                 {
-                    bool lmb = mouse.leftButton.isPressed;
-                    if (lmb && !swordOut && (attack == Attack.None || attack == Attack.Kick)) RaiseSword();
-                    else if (!lmb && swordOut) LowerSword();
+                    if (mouse.leftButton.wasPressedThisFrame) { charging = true; pressTime = Time.time; }
+                    if (charging && !mouse.leftButton.isPressed)
+                    {
+                        charging = false;
+                        bool heavy = Time.time - pressTime >= chargeTime;
+                        if (!swinging && !IsStuck && attack == Attack.None) BeginSwing(heavy);
+                        else if (!heavy && swinging) queued = true; // нажал во время удара — следующий удар серии
+                    }
                 }
-                else if (!sword && mouse.leftButton.wasPressedThisFrame && attack == Attack.None) StartAttack(Attack.Tool);
+                else if (tool != Tool.Sword && tool != Tool.Bow && mouse.leftButton.wasPressedThisFrame && attack == Attack.None)
+                    StartAttack(Attack.Tool);
             }
         }
 
-        UpdateSword(md);
+        UpdateSwing();
+        UpdateEmbed();
         UpdateAttack(tool);
         UpdateArc();
-        PlayerCamera.LookScale = IsStuck ? embeddedLook : 1f;
         Animate();
+        if (swinging) SweepBlade(); // проверяем по тому, где клинок СЕЙЧАС нарисован
+        else havePrev = false;
     }
 
     // =====================================================================
-    // Меч в руке
+    // Меч
     // =====================================================================
-    void RaiseSword()
+    void BeginSwing(bool heavy)
     {
-        swordOut = true;
-        havePrev = false;
-        lag = Vector2.zero;
-    }
+        float cost = heavy ? heavyStamina : swingStamina;
+        if (health != null && !health.UseStamina(cost, false)) { Say("Нет сил — передохни"); return; }
 
-    void LowerSword()
-    {
-        swordOut = false;
-        havePrev = false;
-        if (IsStuck) RipOut();
-    }
-
-    static readonly Vector3 GuardDir = new Vector3(0.06f, -0.1f, 1f).normalized;
-
-    Vector3 BladeDirLocal() => Quaternion.Euler(lag.y, lag.x, 0f) * GuardDir;
-
-    Vector3 HandWorld => pivot.TransformPoint(new Vector3(0.18f, -0.18f, 0.05f));
-
-    void BladePoints(Vector3[] pts)
-    {
-        Vector3 hand = HandWorld;
-        Vector3 d = pivot.TransformDirection(BladeDirLocal());
-        for (int i = 0; i < pts.Length; i++) pts[i] = hand + d * Mathf.Lerp(0.45f, bladeLength, i / (pts.Length - 1f));
-    }
-
-    void UpdateSword(Vector2 md)
-    {
-        float udt = Mathf.Max(Time.unscaledDeltaTime, 0.0001f);
-        outBlend = Mathf.MoveTowards(outBlend, swordOut ? 1f : 0f, udt * 7f);
-
-        // клинок отстаёт от поворота камеры, потом догоняет
-        Vector2 targetLag = Vector2.ClampMagnitude(new Vector2(-md.x, md.y) * 0.35f, 22f);
-        lag = Vector2.Lerp(lag, targetLag, 1f - Mathf.Exp(-12f * udt));
-
-        // скорость кончика клинка (по камере — она крутится в реальном времени)
-        BladePoints(curPts);
-        Vector3 tip = curPts[BladeSamples - 1];
-        tipVel = Vector3.Lerp(tipVel, (tip - lastTip) / udt, 1f - Mathf.Exp(-20f * udt));
-        lastTip = tip;
-        tipSpeedShown = Mathf.Lerp(tipSpeedShown, swordOut && !IsStuck ? tipVel.magnitude : 0f, 1f - Mathf.Exp(-10f * udt));
-
-        if (!swordOut) { havePrev = false; return; }
-        if (IsStuck) { UpdateEmbed(md); havePrev = false; return; }
-        if (outBlend < 0.85f || Time.time < blockedUntil || attack == Attack.Recoil || attack == Attack.Rip) { havePrev = false; return; }
-
-        if (havePrev)
+        if (heavy)
         {
-            for (int i = 0; i < BladeSamples; i++)
-            {
-                float speed = (curPts[i] - prevPts[i]).magnitude / udt;
-                if (TestSegment(prevPts[i], curPts[i], speed)) break;
-            }
+            swingS = new Vector2(0.15f, -1f).normalized; // сверху вниз
+            swDur = heavyTime;
+            swingDamage = heavyDamage;
+            comboStep = 0;
         }
-        havePrev = swordOut && !IsStuck && Time.time >= blockedUntil;
-        System.Array.Copy(curPts, prevPts, BladeSamples);
+        else
+        {
+            if (Time.time > comboUntil) comboStep = 0;
+            swingS = comboStep == 0 ? new Vector2(-1f, -0.15f) : comboStep == 1 ? new Vector2(1f, -0.1f) : new Vector2(-0.2f, -1f);
+            swingS.Normalize();
+            swDur = comboStep == 2 ? comboEndTime : swingTime;
+            swingDamage = comboStep == 2 ? comboEndDamage : slashDamage;
+            comboStep = (comboStep + 1) % 3;
+        }
+        swingHeavy = heavy;
+        swinging = true;
+        swP = 0f;
+        queued = false;
+        havePrev = false;
+        hitThisSwing.Clear();
+        Lunge(heavy ? 0.35f : 0.15f);
     }
 
-    // Отрезок, который прошёл клинок за кадр. true — дальше не проверять
-    bool TestSegment(Vector3 a, Vector3 b, float speed)
+    void UpdateSwing()
+    {
+        if (!swinging) return;
+        float rate = Time.time < dragUntil ? 0.25f : 1f; // в теле клинок идёт медленнее — чувствуется вес
+        swP += Time.deltaTime / Mathf.Max(0.05f, swDur) * rate;
+        if (swP < 1f) return;
+        swinging = false;
+        swP = 1f;
+        comboUntil = Time.time + 0.5f;
+        if (queued && !IsStuck) BeginSwing(false);
+        queued = false;
+    }
+
+    bool ActiveNow() => swinging && swP > 0.24f && swP < 0.76f;
+
+    void ModelBlade(Vector3[] pts)
+    {
+        for (int i = 0; i < pts.Length; i++)
+            pts[i] = swingModel.TransformPoint(new Vector3(0f, Mathf.Lerp(bladeBaseY, bladeTipY, i / (pts.Length - 1f)), 0f));
+    }
+
+    // Клинок на экране прошёл путь от прошлого кадра до этого — во что он врезался
+    void SweepBlade()
+    {
+        if (swingModel == null || hotbar == null || hotbar.Current != Tool.Sword || !ActiveNow()) { havePrev = false; return; }
+        ModelBlade(curPts);
+        bool stop = false;
+        if (havePrev)
+            for (int i = 0; i < BladeSamples && !stop; i++)
+                stop = TestSegment(prevPts[i], curPts[i], curPts[i] - prevPts[i]);
+        System.Array.Copy(curPts, prevPts, BladeSamples);
+        havePrev = !stop && swinging;
+    }
+
+    // true — клинок остановился
+    bool TestSegment(Vector3 a, Vector3 b, Vector3 motion)
     {
         Vector3 d = b - a;
         float len = d.magnitude;
         if (len < 0.0005f) return false;
-        Vector3 motion = d / len;
-        RaycastHit[] hits = Physics.RaycastAll(a, motion, len, ~(1 << 2), QueryTriggerInteraction.Collide);
+        RaycastHit[] hits = Physics.RaycastAll(a, d / len, len, ~(1 << 2), QueryTriggerInteraction.Collide);
         System.Array.Sort(hits, (x, y) => x.distance.CompareTo(y.distance));
         foreach (RaycastHit h in hits)
         {
@@ -303,89 +319,61 @@ public class PlayerCombat : MonoBehaviour
             BodyPart bp = h.collider.GetComponentInParent<BodyPart>();
             if (bp != null)
             {
-                if (!bp.enabled || bp.owner == null || speed < minHitSpeed) continue;
-                if (hitCooldown.TryGetValue(bp.owner, out float until) && Time.time < until) continue;
-                Strike(bp, h.point, motion, speed);
-                return true;
+                if (!bp.enabled || bp.owner == null || hitThisSwing.Contains(bp.owner)) continue;
+                if (Strike(bp, h.point, motion.normalized)) return true;
+                continue;
             }
             if (h.collider.isTrigger) continue;
             if (h.collider.GetComponentInParent<Enemy>() != null) continue;
             if (h.collider.GetComponentInParent<PlayerMovement>() != null || h.collider.GetComponentInParent<NetworkPlayer>() != null) continue;
             Rigidbody body = h.collider.attachedRigidbody;
-            if (body != null && !body.isKinematic) { if (speed > 2f) body.AddForce(motion * Mathf.Min(speed, 10f) * 0.6f, ForceMode.VelocityChange); continue; }
+            if (body != null && !body.isKinematic) { body.AddForce(motion.normalized * 4f, ForceMode.VelocityChange); continue; }
             if (Mathf.Abs(h.normal.y) > 0.55f) continue;  // пол — скользит
-            if (speed >= minHitSpeed) HitWall(h.point);
+            HitWall(h.point);
             return true;
         }
         return false;
     }
 
-    // Клинок вошёл в часть тела
-    void Strike(BodyPart bp, Vector3 point, Vector3 motion, float speed)
+    // Клинок попал в часть тела. true — дальше не идёт
+    bool Strike(BodyPart bp, Vector3 point, Vector3 motion)
     {
         Enemy e = bp.owner;
-        Vector3 ml = pivot.InverseTransformDirection(motion);
-        HitType type = ml.z > 0.75f ? HitType.Thrust : ml.y < -0.6f ? HitType.Chop : ml.y > 0.6f ? HitType.Uppercut : HitType.Slash;
-        bool heavy = speed >= heavySpeed;
-        float dmg = Mathf.Min(speed, maxSpeedForDamage) * damagePerSpeed;
-        if (health != null && !health.UseStamina(dmg * hitStaminaPerDamage, true)) { dmg *= 0.4f; Say("Нет сил — удар слабый"); }
+        hitThisSwing.Add(e);
+        HitType type = swingS.y < -0.6f ? HitType.Chop : HitType.Slash;
         bool brute = e.kind == EnemyKind.Brute;
+        bool bounce = brute && !swingHeavy && (bp.type == BodyPartType.Torso || bp.type == BodyPartType.Head);
+        bool embed = swingHeavy && !bounce;
 
-        // КРЕСТ: два рубящих по одной твари подряд в разные стороны
-        if (type == HitType.Slash && lastHitEnemy == e && lastHitType == HitType.Slash && Time.time - lastHitTime < 1.4f &&
-            Vector3.Dot(lastHitMotion, motion) < -0.4f)
-        {
-            type = HitType.Cross;
-            dmg *= 1.4f;
-            if (brute) EnemyManager.ShowCallout(Callout.Cross);
-        }
-        lastHitEnemy = e; lastHitType = type; lastHitMotion = motion; lastHitTime = Time.time;
+        EnemyManager.RequestHit(e, new HitInfo { damage = swingDamage, dir = motion, part = bp.type, type = type, heavy = swingHeavy, embed = embed && !brute });
+        e.LocalReact((int)bp.type, motion, swingHeavy ? 1.3f : 0.8f);
+        CombatFx.Ichor(point, motion, swingHeavy ? 14 : 7);
+        CombatFx.Hitstop(swingHeavy ? 0.08f : 0.04f);
+        PlayerCamera.Shake(swingHeavy ? 0.35f : 0.15f);
+        ShowPart(bp.type);
 
-        bool bounce = brute && !heavy && type != HitType.Thrust && (bp.type == BodyPartType.Torso || bp.type == BodyPartType.Head);
-        bool cutThrough = heavy && type != HitType.Thrust && !brute && bp.type == BodyPartType.Torso; // с размаху — отбрасывает
-        bool embed = !bounce && !cutThrough;
-
-        EnemyManager.RequestHit(e, new HitInfo
-        {
-            damage = dmg, dir = motion, part = bp.type, type = type, heavy = heavy,
-            embed = embed && bp.type == BodyPartType.Torso && !brute
-        });
-        e.LocalReact((int)bp.type, motion, Mathf.Clamp(speed / 10f, 0.5f, 1.8f));
-        CombatFx.Ichor(point, motion, Mathf.Clamp(Mathf.RoundToInt(speed * 0.8f), 4, 16));
-        CombatFx.Hitstop(heavy ? 0.07f : 0.035f);
-        PlayerCamera.Shake(Mathf.Clamp(speed / 40f, 0.08f, 0.45f));
-        ShowPart(bp.type, heavy);
-        hitCooldown[e] = Time.time + 0.3f;
-
-        if (bounce) { Bounce("Отскок! Громилу — быстрым сильным ударом или по ногам"); return; }
+        if (bounce) { Bounce("Отскок! Громилу — тяжёлым ударом (зажми ЛКМ) или по ногам"); return true; }
         if (embed)
         {
+            // клинок вошёл и сидит в теле, потом сам выходит
             embedEnemy = e;
             embedPart = bp;
-            embedLocal = bp.transform.InverseTransformPoint(point + motion * 0.12f);
-            embedTorso = bp.type == BodyPartType.Torso && !brute;
-            sawAccum = 0f;
+            embedLocal = bp.transform.InverseTransformPoint(point + motion * 0.15f);
+            embedUntil = Time.time + embedTime;
+            swinging = false;
+            queued = false;
+            return true;
         }
+        if (bp.type == BodyPartType.Torso || brute) dragUntil = Time.time + 0.07f;
+        return false;
     }
 
-    // Клинок в теле: тяжело, можно пилить, отпустил — выдернул
-    void UpdateEmbed(Vector2 md)
+    void UpdateEmbed()
     {
+        if (!IsStuck) return;
         bool gone = embedPart == null || embedPart.lost || !embedPart.enabled || embedEnemy == null || embedEnemy.HealthFraction <= 0f;
-        if (gone) { FreeBlade(); return; } // отрубил или убил — клинок свободен
-        Vector3 p = embedPart.transform.TransformPoint(embedLocal);
-        if (Vector3.Distance(p, HandWorld) > bladeLength + 0.6f) { Say("Клинок вырвало"); RipOut(); return; }
-
-        sawAccum += md.magnitude;
-        if (sawAccum > 220f)
-        {
-            sawAccum = 0f;
-            Vector3 dir = pivot.TransformDirection(new Vector3(md.x, md.y, 0f).normalized);
-            EnemyManager.RequestHit(embedEnemy, new HitInfo { damage = sawDamage, dir = dir, part = embedPart.type, type = HitType.Slash });
-            embedEnemy.LocalReact((int)embedPart.type, dir, 0.5f);
-            CombatFx.Ichor(p, dir, 5);
-            PlayerCamera.Shake(0.08f);
-        }
+        if (gone) { FreeBlade(); return; }
+        if (Time.time >= embedUntil) RipOut();
     }
 
     void FreeBlade()
@@ -399,33 +387,19 @@ public class PlayerCombat : MonoBehaviour
     {
         Enemy e = embedEnemy;
         BodyPart bp = embedPart;
-        bool torso = embedTorso;
+        Vector3 p = bp != null ? bp.transform.TransformPoint(embedLocal) : Vector3.zero;
         FreeBlade();
         if (e == null || bp == null) return;
         Vector3 back = -FlatForward();
-        Vector3 p = bp.transform.TransformPoint(embedLocal);
-        if (torso && tipVel.magnitude > 7f)
-        {
-            // резко повёл и отпустил — тварь слетает с клинка в ту сторону
-            Vector3 fling = tipVel; fling.y = Mathf.Max(fling.y, 0f);
-            EnemyManager.RequestHit(e, new HitInfo { damage = ripDamage, dir = fling.normalized, part = BodyPartType.Torso, type = HitType.Kick });
-            e.LocalReact((int)BodyPartType.Torso, fling.normalized, 1.4f);
-            EnemyManager.ShowCallout("СБРОСИЛ С КЛИНКА!");
-        }
-        else
-        {
-            EnemyManager.RequestHit(e, new HitInfo { damage = ripDamage, dir = back, part = bp.type, type = HitType.RipOut });
-            e.LocalReact((int)bp.type, back, 1.2f);
-        }
-        CombatFx.Ichor(p, back, 16);
-        CombatFx.Hitstop(0.05f);
-        PlayerCamera.Shake(0.3f);
-        hitCooldown[e] = Time.time + 0.35f;
+        EnemyManager.RequestHit(e, new HitInfo { damage = ripDamage, dir = back, part = bp.type, type = HitType.RipOut });
+        e.LocalReact((int)bp.type, back, 0.8f);
+        CombatFx.Ichor(p, back, 14);
+        PlayerCamera.Shake(0.2f);
         if (swingModel != null) { recoilFrom = swingModel.localRotation; recoilFromPos = swingModel.localPosition; }
         StartAttack(Attack.Rip);
     }
 
-    void ShowPart(BodyPartType t, bool heavy)
+    void ShowPart(BodyPartType t)
     {
         switch (t)
         {
@@ -435,7 +409,6 @@ public class PlayerCombat : MonoBehaviour
             case BodyPartType.Sack: partText = "МЕШОК!"; break;
             default: partText = "тело"; break;
         }
-        if (heavy) partText += "   СИЛЬНО";
         partTextUntil = Time.time + 0.8f;
     }
 
@@ -450,13 +423,14 @@ public class PlayerCombat : MonoBehaviour
     void Bounce(string text)
     {
         if (swingModel != null) { recoilFrom = swingModel.localRotation; recoilFromPos = swingModel.localPosition; }
+        swinging = false;
+        queued = false;
+        havePrev = false;
         attack = Attack.Recoil;
         attackStart = Time.time;
         attackDuration = 0.32f;
         hitAt = 99f;
         hitDone = true;
-        blockedUntil = Time.time + 0.35f;
-        havePrev = false;
         Lunge(-0.2f);
         PlayerCamera.Shake(0.25f);
         if (text != null) Say(text);
@@ -516,7 +490,6 @@ public class PlayerCombat : MonoBehaviour
                 if (e == null) return;
                 EnemyManager.RequestHit(e, new HitInfo { damage = kickDamage, dir = fwd, part = BodyPartType.Torso, type = HitType.Kick });
                 e.LocalReact((int)BodyPartType.Torso, fwd, 1.3f);
-                hitCooldown[e] = Time.time + 0.35f;
                 CombatFx.Hitstop(0.05f);
                 PlayerCamera.Shake(0.25f);
                 break;
@@ -676,8 +649,10 @@ public class PlayerCombat : MonoBehaviour
         else if (p.y < -10f) arcText = "В ПРОПАСТЬ";
     }
 
+
+
     // =====================================================================
-    // Анимация оружия в руке
+    // Анимация оружия в руке (позы — в осях головы)
     // =====================================================================
     static Quaternion BladeRotation(Vector3 dl)
     {
@@ -685,44 +660,89 @@ public class PlayerCombat : MonoBehaviour
         return Quaternion.LookRotation(dl, hint) * Quaternion.Euler(90f, 0f, 0f); // ось клинка (вверх у модели) — вдоль dl
     }
 
+    // Поза на дуге удара: th от -80° (замах) до +80° (конец удара)
+    static void ArcPose(Vector2 s, float thDeg, out Vector3 dl, out Vector3 hand)
+    {
+        float th = thDeg * Mathf.Deg2Rad;
+        Vector3 side = new Vector3(s.x, s.y, 0f);
+        dl = (Vector3.forward * Mathf.Cos(th) + side * Mathf.Sin(th) + Vector3.forward * 0.2f).normalized;
+        hand = new Vector3(0.15f, -0.3f, 0.3f) + side * 0.25f * Mathf.Sin(th) + Vector3.forward * 0.12f * Mathf.Cos(th);
+    }
+
+    static float Smooth(float x) { x = Mathf.Clamp01(x); return x * x * (3f - 2f * x); }
+
+    // Удар: замах (плавно) — быстрый проход через экран — возврат
+    void SwingPose(out Quaternion rot, out Vector3 pos)
+    {
+        ArcPose(swingS, -80f, out Vector3 d0, out Vector3 h0);
+        ArcPose(swingS, 80f, out Vector3 d1, out Vector3 h1);
+        Quaternion r0 = BladeRotation(d0), r1 = BladeRotation(d1);
+        float p = swP;
+        if (p < 0.24f)
+        {
+            float w = Smooth(p / 0.24f);
+            rot = Quaternion.Slerp(restRotation, r0, w); pos = Vector3.Lerp(restPosition, h0, w);
+        }
+        else if (p < 0.76f)
+        {
+            float q = (p - 0.24f) / 0.52f;
+            q = q * q * (3f - 2f * q);
+            ArcPose(swingS, Mathf.Lerp(-80f, 80f, q), out Vector3 dl, out Vector3 hand);
+            rot = BladeRotation(dl); pos = hand;
+        }
+        else
+        {
+            float w = Smooth((p - 0.76f) / 0.24f);
+            rot = Quaternion.Slerp(r1, restRotation, w); pos = Vector3.Lerp(h1, restPosition, w);
+        }
+    }
+
     void Animate()
     {
         if (swingModel == null) return;
+        if (hotbar != null && hotbar.Current == Tool.Bow) return; // луком управляет PlayerBow
         float udt = Time.unscaledDeltaTime;
         Quaternion rot = restRotation;
         Vector3 pos = restPosition;
-        Vector3 hand = new Vector3(0.22f, -0.22f, 0.3f);
         float now = Time.time;
-        bool sword = hotbar == null || hotbar.Current == Tool.Sword;
+        bool hasSword = hotbar == null || hotbar.Current == Tool.Sword;
 
         if (attack == Attack.Recoil || attack == Attack.Rip)
         {
             float p = Mathf.Clamp01((now - attackStart) / attackDuration);
-            Quaternion target = swordOut ? BladeRotation(BladeDirLocal()) : restRotation;
-            Vector3 targetPos = swordOut ? hand + BladeDirLocal() * 0.15f : restPosition;
-            rot = Quaternion.Slerp(recoilFrom, target, Mathf.SmoothStep(0f, 1f, p)) * Quaternion.Euler(-25f * Mathf.Sin(p * Mathf.PI), 0f, 0f);
-            pos = Vector3.Lerp(recoilFromPos, targetPos, p) + Vector3.back * 0.15f * Mathf.Sin(p * Mathf.PI);
+            rot = Quaternion.Slerp(recoilFrom, restRotation, Smooth(p)) * Quaternion.Euler(-25f * Mathf.Sin(p * Mathf.PI), 0f, 0f);
+            pos = Vector3.Lerp(recoilFromPos, restPosition, Smooth(p)) + Vector3.back * 0.15f * Mathf.Sin(p * Mathf.PI);
         }
-        else if (IsStuck && embedPart != null)
+        else if (hasSword && IsStuck && embedPart != null)
         {
-            // клинок указывает в точку, где он сидит в теле, и подрагивает
-            Vector3 w = embedPart.transform.TransformPoint(embedLocal);
-            Vector3 dl = pivot.InverseTransformDirection(w - HandWorld).normalized;
-            rot = BladeRotation(dl) * Quaternion.Euler(Mathf.Sin(now * 37f) * 2f, 0f, Mathf.Sin(now * 29f) * 2f);
-            pos = hand + dl * 0.28f;
+            // клинок направлен в точку в теле, остриё на 25 см глубже — видно, что он внутри
+            Vector3 target = pivot.InverseTransformPoint(embedPart.transform.TransformPoint(embedLocal));
+            Vector3 handRest = new Vector3(0.15f, -0.3f, 0.35f);
+            Vector3 dl = (target - handRest).normalized;
+            Vector3 hand = target + dl * (0.25f - bladeTipY);
+            Vector3 off = hand - handRest;
+            if (off.magnitude > 0.7f) hand = handRest + off.normalized * 0.7f;
+            rot = BladeRotation(dl) * Quaternion.Euler(Mathf.Sin(now * 37f) * 1.5f, 0f, 0f);
+            pos = hand;
         }
-        else if (outBlend > 0f && sword)
+        else if (hasSword && swinging)
         {
-            Vector3 dl = BladeDirLocal();
-            float w = Mathf.SmoothStep(0f, 1f, outBlend);
-            rot = Quaternion.Slerp(restRotation, BladeRotation(dl), w);
-            pos = Vector3.Lerp(restPosition, hand + dl * 0.15f, w);
+            SwingPose(out rot, out pos);
+        }
+        else if (hasSword && charging && Time.time - pressTime > 0.08f)
+        {
+            // замах над головой для тяжёлого удара; заряжен — дрожит
+            float c = Smooth((Time.time - pressTime) / chargeTime);
+            ArcPose(new Vector2(0.15f, -1f).normalized, -95f, out Vector3 dl, out Vector3 hand);
+            Vector3 shake = c >= 0.99f ? Random.insideUnitSphere * 0.004f : Vector3.zero;
+            rot = Quaternion.Slerp(restRotation, BladeRotation(dl), c);
+            pos = Vector3.Lerp(restPosition, hand, c) + shake;
         }
         else if (attack == Attack.Kick || attack == Attack.Tool || attack == Attack.Throw)
         {
             float p = Mathf.Clamp01((now - attackStart) / attackDuration);
             float hitP = Mathf.Max(0.01f, hitAt / attackDuration);
-            float strike = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(p / (hitP * 1.4f)));
+            float strike = Smooth(p / (hitP * 1.4f));
             float back = p < 0.6f ? 1f : 1f - (p - 0.6f) / 0.4f;
             Vector3 from = Vector3.zero, to = Vector3.zero;
             switch (attack)
@@ -754,15 +774,15 @@ public class PlayerCombat : MonoBehaviour
         }
 
         // Блок: меч поперёк перед лицом. Удар в блок — меч дёргается
-        bool blocking = sword && health != null && health.IsBlocking;
+        bool blocking = hasSword && health != null && health.IsBlocking;
         blockBlend = Mathf.MoveTowards(blockBlend, blocking ? 1f : 0f, udt * 10f);
         if (blockBlend > 0f)
         {
             float jolt = health != null ? health.BlockJolt : 0f;
             Vector3 bl = new Vector3(-1f, 0.2f, 0.25f).normalized;
             Quaternion br = BladeRotation(bl) * Quaternion.Euler(-jolt * 12f, 0f, 0f);
-            Vector3 bpos = new Vector3(0.12f, -0.06f + jolt * 0.04f, 0.5f - jolt * 0.08f);
-            float w = Mathf.SmoothStep(0f, 1f, blockBlend);
+            Vector3 bpos = new Vector3(0.55f, -0.08f + jolt * 0.04f, 0.55f - jolt * 0.08f);
+            float w = Smooth(blockBlend);
             rot = Quaternion.Slerp(rot, br, w);
             pos = Vector3.Lerp(pos, bpos, w);
         }
@@ -770,6 +790,8 @@ public class PlayerCombat : MonoBehaviour
         swingModel.localRotation = rot;
         swingModel.localPosition = pos;
     }
+
+    float blockBlend;
 
     void Say(string text) { message = text; messageUntil = Time.time + 1.5f; }
 
@@ -779,15 +801,7 @@ public class PlayerCombat : MonoBehaviour
     void OnGUI()
     {
         float cx = Screen.width / 2f, cy = Screen.height / 2f;
-        GUI.Label(new Rect(cx - 6, cy - 12, 20, 24), "+", Hud.Big);
-
-        // Скорость клинка: белая — обычный удар, оранжевая — сильный
-        if (swordOut && !IsStuck)
-        {
-            float k = Mathf.Clamp01(tipSpeedShown / heavySpeed);
-            Color c = tipSpeedShown >= heavySpeed ? new Color(1f, 0.55f, 0.15f) : tipSpeedShown >= minHitSpeed ? Color.white : new Color(1f, 1f, 1f, 0.35f);
-            Hud.Bar(new Rect(cx - 40, cy + 18, 80, 4), k, c, null);
-        }
+        if (hotbar == null || hotbar.Current != Tool.Bow) GUI.Label(new Rect(cx - 6, cy - 12, 20, 24), "+", Hud.Big); // у лука свой прицел
 
         if (Time.time < partTextUntil)
         {
@@ -807,14 +821,18 @@ public class PlayerCombat : MonoBehaviour
                 GUI.color = old;
             }
         }
-        else if (IsStuck)
-            GUI.Label(new Rect(0, cy + 60, Screen.width, 24),
-                      "Клинок в теле:  отпусти ЛКМ — выдернуть (резко поведи — сбросишь)   води мышью — пилить   Q — пнуть   к стене — пригвоздить", Hud.Center);
-        else if (hotbar != null && hotbar.Current != Tool.Hammer && lookedNode == null)
+        else if (hotbar != null && hotbar.Current != Tool.Hammer && hotbar.Current != Tool.Bow && lookedNode == null)
             GUI.Label(new Rect(0, Screen.height - 88, Screen.width, 22),
                       hotbar.Current == Tool.Sword
-                          ? "Держи ЛКМ и веди мышью — рубишь (быстрее — сильнее)   ПКМ — блок (смотри на врага)   Q — пинок   G — схватить   Ctrl — перекат"
+                          ? "ЛКМ — удар (подряд: справа, слева, сверху)   зажать ЛКМ — тяжёлый сверху   ПКМ — блок (смотри на врага)   Q — пинок   G — схватить   Ctrl — перекат"
                           : "ЛКМ — удар   ПКМ — блок только мечом   Q — пинок   G — схватить   Ctrl — перекат", Hud.CenterTiny);
+
+        // Зарядка тяжёлого удара
+        if (charging && Time.time - pressTime > 0.08f)
+        {
+            float c = Mathf.Clamp01((Time.time - pressTime) / chargeTime);
+            Hud.Bar(new Rect(cx - 40, cy + 18, 80, 4), c, c >= 1f ? new Color(1f, 0.6f, 0.2f) : Color.white, null);
+        }
 
         if (lookedNode != null)
         {
@@ -826,6 +844,8 @@ public class PlayerCombat : MonoBehaviour
             GUI.Label(new Rect(cx - 300, cy - 70, 600, 30), message, Hud.CenterBig);
     }
 }
+
+
 
 // Общие помощники: куда смотрит игрок
 public static class AimHelper

@@ -6,7 +6,7 @@ public enum EnemyKind { Crawler, Runner, Brute, Spitter }
 // Каким движением ударили. Направление удара выбирается мышью (см. PlayerCombat).
 //   Slash — рубящий вбок, Chop — сверху вниз, Uppercut — снизу вверх, Thrust — выпад (колющий),
 //   Cross — два рубящих крест-накрест, RipOut — вырвать застрявший клинок.
-public enum HitType { Slash, Chop, Uppercut, Thrust, Kick, Tool, RipOut, Cross }
+public enum HitType { Slash, Chop, Uppercut, Thrust, Kick, Tool, RipOut, Cross, Arrow }
 
 // Всё про один удар
 public struct HitInfo
@@ -123,6 +123,7 @@ public class Enemy : MonoBehaviour
     Vector3 lastVisPos;
     bool dead;
     bool spiked;                 // висит на кольях
+    bool freePin;                // пригвождён стрелой к стене
     float windStart;
     Vector3 visVel;
 
@@ -563,7 +564,7 @@ public class Enemy : MonoBehaviour
             callout = Callout.Sack;
         }
         // Отрубили часть тела
-        else if (part != BodyPartType.Torso && partHp[(int)part] <= 0f && !Lost(part))
+        else if (part != BodyPartType.Torso && partHp[(int)part] <= 0f && !Lost(part) && (h.type != HitType.Arrow || part == BodyPartType.Head)) // стрелой руку не отрубить
         {
             Sever(part, lastHitDir);
             if (part == BodyPartType.Head) { Health = 0f; if (callout == Callout.None) callout = Callout.Head; }
@@ -614,7 +615,7 @@ public class Enemy : MonoBehaviour
         }
 
         // Клинок вошёл в туловище и застрял — тварь насажена на клинок
-        if (h.embed && part == BodyPartType.Torso && !brute && CurrentState != State.Thrown)
+        if (h.embed && !brute && CurrentState != State.Thrown)
         {
             Transform t = EnemyManager.Instance != null ? EnemyManager.Instance.PlayerTransform(attacker) : null;
             if (t != null)
@@ -644,7 +645,7 @@ public class Enemy : MonoBehaviour
             {
                 // Боковой удар разворачивает тело в сторону клинка
                 float side = Vector3.Dot(dir, transform.right);
-                twist += -side * (brute ? 160f : 480f) * (h.heavy ? 1.4f : 1f);
+                twist += -side * (brute ? 50f : 140f) * (h.heavy ? 1.4f : 1f);
                 Knock(dir * (h.heavy ? 8f : 3.5f));
                 if (h.type == HitType.Cross && !brute) { BeginThrow(dir * 9f + Vector3.up * 3f, 6f); callout = Callout.Cross; break; }
                 if (h.heavy && !brute) { BeginThrow(dir * 8f + Vector3.up * 3f, 4f); break; }
@@ -681,6 +682,18 @@ public class Enemy : MonoBehaviour
             case HitType.RipOut:
                 Knock(dir * 2f);
                 Interrupt(State.Flinch, 0.5f);
+                break;
+            case HitType.Arrow:
+                // Стрела на полном натяжении пригвождает к стене за спиной
+                if (h.heavy && !brute && part == BodyPartType.Torso && WallBehind(dir, 0.45f * bodyScale + 1.2f, out RaycastHit aw))
+                {
+                    Pin(aw, dir);
+                    freePin = true;
+                    callout = Callout.Pinned;
+                    break;
+                }
+                if (part == BodyPartType.Head) Interrupt(State.Stagger, brute ? 0.3f : 0.7f);
+                else { Knock(dir * Mathf.Clamp(h.damage / 15f, 0.5f, 3f)); LimbEffect(part, h, brute, ref callout); }
                 break;
         }
         Finish(part, strength, callout);
@@ -816,24 +829,12 @@ public class Enemy : MonoBehaviour
         return false;
     }
 
-    // Тварь на клинке перед игроком. Толкаешь её в стену — пригвождаешь
+    // Тварь на клинке: стоит на месте, дёргается, не может бить. Отошёл далеко — клинок вышел сам
     void HoldOnBlade()
     {
-        if (holder == null) { ReleaseBlade(State.Recover, 0.4f); return; }
-        Vector3 fwd = holder.forward; fwd.y = 0f; fwd.Normalize();
-        Vector3 want = holder.position + fwd * (1.25f + 0.45f * bodyScale);
-        want.y = Mathf.Lerp(transform.position.y, holder.position.y - 0.9f, 0.5f);
-        Vector3 step = want - transform.position;
-        float ahead = Mathf.Max(0f, Vector3.Dot(step, fwd));
-        if (Time.time - impaledAt > 0.1f && WallBehind(fwd, 0.45f * bodyScale + 0.15f + ahead, out RaycastHit wh))
-        {
-            Pin(wh, fwd);
-            EnemyManager.React(this, -1, Vector3.zero, 0f, (ulong)HeldBy, Callout.Pinned);
-            return;
-        }
-        transform.position = Vector3.MoveTowards(transform.position, want, 14f * Time.deltaTime);
+        if (holder == null || Vector3.Distance(holder.position, transform.position) > 4f) { ReleaseBlade(State.Recover, 0.4f); return; }
         Face(holder.position - transform.position);
-        Health -= 4f * Time.deltaTime; // больно
+        Health -= 3f * Time.deltaTime; // больно
         if (Time.time >= stateUntil) ReleaseBlade(State.Recover, 0.5f); // соскользнула
     }
 
@@ -865,13 +866,13 @@ public class Enemy : MonoBehaviour
 
     void StayPinned()
     {
-        if (spiked)
+        if (spiked || freePin)
         {
             if (rb != null) { Destroy(rb); rb = null; }
             if (throwCol != null) { Destroy(throwCol); throwCol = null; }
             transform.rotation = Quaternion.Euler(0f, transform.eulerAngles.y, 0f);
-            Health -= 22f * Time.deltaTime;
-            if (Time.time >= stateUntil) { spiked = false; ReleaseBlade(State.Down, 1.2f); }
+            if (spiked) Health -= 22f * Time.deltaTime;
+            if (Time.time >= stateUntil) { spiked = false; freePin = false; ReleaseBlade(State.Down, 1.2f); }
             return;
         }
         Health -= 3f * Time.deltaTime;
@@ -1070,14 +1071,14 @@ public class Enemy : MonoBehaviour
         Vector3 axis = hdir.sqrMagnitude > 0.09f * dir.sqrMagnitude
             ? Vector3.Cross(Vector3.up, hdir.normalized)
             : transform.right * (dir.y < 0f ? 1f : -1f);              // сверху — кивок вперёд, снизу — запрокидывает
-        Vector3 local = transform.InverseTransformDirection(axis) * 650f * strength;
+        Vector3 local = transform.InverseTransformDirection(axis) * 200f * strength; // отшатывается, без диких изгибов
         BodyPart torso = parts[(int)BodyPartType.Torso];
         BodyPart p = part >= 0 && part < parts.Length ? parts[part] : null;
         if (p == null || p.lost) p = torso;
-        if (p != null) p.reactVel += local;
-        if (torso != null && p != torso) torso.reactVel += local * 0.45f;
+        if (p != null) p.reactVel += local * (p == torso ? 1f : 0.5f);
+        if (torso != null && p != torso) torso.reactVel += local * 0.7f;
         BodyPart head = parts[(int)BodyPartType.Head];
-        if (p == torso && head != null && !head.lost) head.reactVel += local * 0.6f; // голова мотается
+        if (p == torso && head != null && !head.lost) head.reactVel += local * 0.3f; // голова чуть мотается
     }
 
     // Расплющило (у копий — через EnemyManager.Impact)
@@ -1098,15 +1099,6 @@ public class Enemy : MonoBehaviour
                 Transform h = me.transform;
                 transform.position = h.position + h.forward * (1.0f + 0.4f * bodyScale) + Vector3.up * 0.3f;
                 transform.rotation = Quaternion.LookRotation(-h.forward);
-            }
-            else if (mine && CurrentState == State.Impaled)
-            {
-                // На моём клинке
-                Transform h = me.transform;
-                Vector3 f = h.forward; f.y = 0f; f.Normalize();
-                Vector3 want = h.position + f * (1.25f + 0.45f * bodyScale); want.y = netPos.y;
-                transform.position = Vector3.Lerp(transform.position, want, 20f * Time.deltaTime);
-                transform.rotation = Quaternion.LookRotation(-f);
             }
             else
             {
@@ -1151,7 +1143,7 @@ public class Enemy : MonoBehaviour
             case State.Down: rot = Quaternion.Euler(-88f, 0f, 0f); pos.y = 0.25f * bodyScale; break;
             default:
                 // наклон по движению: отбросило назад — откидывается, вбок — заваливается
-                rot = Quaternion.Euler(Mathf.Clamp(visVel.z * 2.5f, -28f, 8f), 0f, Mathf.Clamp(-visVel.x * 4f, -25f, 25f));
+                rot = Quaternion.Euler(Mathf.Clamp(visVel.z * 2f, -15f, 6f), 0f, Mathf.Clamp(-visVel.x * 2.5f, -12f, 12f));
                 if (legsLost == 2) { rot = Quaternion.Euler(68f, 0f, 0f); pos.y = -0.25f * bodyScale; }        // ползёт
                 else if (legsLost == 1) { rot = Quaternion.Euler(8f, 0f, Mathf.Sin(walkPhase) * 12f); pos.y = -0.12f * bodyScale; } // хромает
                 break;
@@ -1246,9 +1238,9 @@ public class Enemy : MonoBehaviour
             }
 
             // Пружина отдачи: удар отклоняет сустав, потом он возвращается с покачиванием
-            bp.reactVel += (-170f * bp.react - 13f * bp.reactVel) * dt;
+            bp.reactVel += (-260f * bp.react - 28f * bp.reactVel) * dt; // жёсткая пружина без раскачки
             bp.react += bp.reactVel * dt;
-            if (bp.react.sqrMagnitude > 75f * 75f) bp.react = bp.react.normalized * 75f;
+            if (bp.react.sqrMagnitude > 25f * 25f) bp.react = bp.react.normalized * 25f;
             Quaternion r = Quaternion.identity;
             float ang = bp.react.magnitude;
             if (ang > 0.05f)

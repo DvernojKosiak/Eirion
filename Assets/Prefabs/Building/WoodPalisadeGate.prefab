@@ -112,7 +112,7 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!1 &3243968983568535405
+--- !u!1 &1324413876311801878
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -120,70 +120,10 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 7778282714677873384}
-  - component: {fileID: 8090014262787551193}
-  m_Layer: 0
-  m_Name: WoodPalisadeGate
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &7778282714677873384
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3243968983568535405}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children:
-  - {fileID: 1885125672456323931}
-  - {fileID: 5318745981848350774}
-  - {fileID: 1957111491305520720}
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &8090014262787551193
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3243968983568535405}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d7defc8f372453e4b94600186204aa8a, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::BuildPiece
-  pieceId: WoodPalisadeGate
-  netId: 0
-  displayName: "\u0412\u043E\u0440\u043E\u0442\u0430 \u0447\u0430\u0441\u0442\u043E\u043A\u043E\u043B\u0430"
-  category: "\u0414\u0435\u0440\u0435\u0432\u043E"
-  maxHealth: 450
-  size: {x: 4, y: 4.5, z: 0.8}
-  costTypes: 00000000i
-  costAmounts: 06000000i
-  requiredStation: 0
-  station: 0
-  buildable: 1
-  village: 0
-  locked: 0
---- !u!1 &5893834656059050841
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 5318745981848350774}
-  - component: {fileID: 7710821419417131648}
-  - component: {fileID: 1762985235493201987}
-  - component: {fileID: 6383448694676410764}
+  - component: {fileID: 8840913932042407812}
+  - component: {fileID: 5859895316726994162}
+  - component: {fileID: 2728539707823378424}
+  - component: {fileID: 3311933781629063218}
   m_Layer: 0
   m_Name: Cube
   m_TagString: Untagged
@@ -191,13 +131,13 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!4 &5318745981848350774
+--- !u!4 &8840913932042407812
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 5893834656059050841}
+  m_GameObject: {fileID: 1324413876311801878}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 1.6, y: 2.25, z: 0}
@@ -206,21 +146,21 @@ Transform:
   m_Children: []
   m_Father: {fileID: 7778282714677873384}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!33 &7710821419417131648
+--- !u!33 &5859895316726994162
 MeshFilter:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 5893834656059050841}
+  m_GameObject: {fileID: 1324413876311801878}
   m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
---- !u!65 &1762985235493201987
+--- !u!65 &2728539707823378424
 BoxCollider:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 5893834656059050841}
+  m_GameObject: {fileID: 1324413876311801878}
   m_Material: {fileID: 0}
   m_IncludeLayers:
     serializedVersion: 2
@@ -235,13 +175,13 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 1, y: 1, z: 1}
   m_Center: {x: 0, y: 0, z: 0}
---- !u!23 &6383448694676410764
+--- !u!23 &3311933781629063218
 MeshRenderer:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 5893834656059050841}
+  m_GameObject: {fileID: 1324413876311801878}
   m_Enabled: 1
   m_CastShadows: 1
   m_ReceiveShadows: 1
@@ -284,7 +224,7 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!1 &8306775773215567894
+--- !u!1 &3243968983568535405
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -292,10 +232,70 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 1957111491305520720}
-  - component: {fileID: 8562972428737319362}
-  - component: {fileID: 9210995448839130395}
-  - component: {fileID: 6023269652904164455}
+  - component: {fileID: 7778282714677873384}
+  - component: {fileID: 8090014262787551193}
+  m_Layer: 0
+  m_Name: WoodPalisadeGate
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &7778282714677873384
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3243968983568535405}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 1885125672456323931}
+  - {fileID: 8840913932042407812}
+  - {fileID: 4637060011769815546}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &8090014262787551193
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3243968983568535405}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d7defc8f372453e4b94600186204aa8a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::BuildPiece
+  pieceId: WoodPalisadeGate
+  netId: 0
+  displayName: "\u0412\u043E\u0440\u043E\u0442\u0430 \u0447\u0430\u0441\u0442\u043E\u043A\u043E\u043B\u0430"
+  category: "\u0414\u0435\u0440\u0435\u0432\u043E"
+  maxHealth: 450
+  size: {x: 4, y: 4.5, z: 0.8}
+  costTypes: 00000000i
+  costAmounts: 06000000i
+  requiredStation: 0
+  station: 0
+  buildable: 1
+  village: 0
+  locked: 0
+--- !u!1 &6182093264374633439
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 4637060011769815546}
+  - component: {fileID: 4601193520511658351}
+  - component: {fileID: 7316797212584340406}
+  - component: {fileID: 1680351296980921166}
   m_Layer: 0
   m_Name: Cube
   m_TagString: Untagged
@@ -303,13 +303,13 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!4 &1957111491305520720
+--- !u!4 &4637060011769815546
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8306775773215567894}
+  m_GameObject: {fileID: 6182093264374633439}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 3.9, z: 0}
@@ -318,21 +318,21 @@ Transform:
   m_Children: []
   m_Father: {fileID: 7778282714677873384}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!33 &8562972428737319362
+--- !u!33 &4601193520511658351
 MeshFilter:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8306775773215567894}
+  m_GameObject: {fileID: 6182093264374633439}
   m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
---- !u!65 &9210995448839130395
+--- !u!65 &7316797212584340406
 BoxCollider:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8306775773215567894}
+  m_GameObject: {fileID: 6182093264374633439}
   m_Material: {fileID: 0}
   m_IncludeLayers:
     serializedVersion: 2
@@ -347,13 +347,13 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 1, y: 1, z: 1}
   m_Center: {x: 0, y: 0, z: 0}
---- !u!23 &6023269652904164455
+--- !u!23 &1680351296980921166
 MeshRenderer:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8306775773215567894}
+  m_GameObject: {fileID: 6182093264374633439}
   m_Enabled: 1
   m_CastShadows: 1
   m_ReceiveShadows: 1

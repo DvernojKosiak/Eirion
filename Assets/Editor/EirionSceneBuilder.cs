@@ -4,26 +4,26 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 
 // Скрипт ДЛЯ РЕДАКТОРА (не для игры). Лежит в папке Assets/Editor.
-// Добавляет в верхнее меню Unity пункт "Eirion -> Создать сцену форта".
-// Он сам строит черновую карту из простых фигур и сохраняет её:
-//   форт с частоколом, башнями, воротами и стеной для обороны (на неё можно забежать по пандусу),
-//   деревню за фортом (её мы защищаем), площадку для дирижабля,
-//   лес на севере (зона вылазок) и стену тьмы на горизонте.
+// Меню "Eirion -> Создать сцену форта":
+//   1) делает детали построек (префабы) в Assets/Prefabs/Building;
+//   2) собирает из них большой форт — всё можно ломать и перестраивать;
+//   3) ставит деревню, лес, границу тьмы, героя с мечом и режимом стройки.
 // Направления: север (+Z) — к тьме, юг (-Z) — к деревне.
-// Потом модельеры заменят эти кубы на настоящие модели.
 public static class EirionSceneBuilder
 {
     const string ScenePath = "Assets/Scenes/Fort.unity";
+    const string PrefabFolder = "Assets/Prefabs/Building";
 
-    // Размеры форта
-    const float FortHalf = 15f;   // форт 30 x 30 метров
-    const float WallHeight = 4f;
-    const float WallThick = 1f;
-    const float GateHalf = 3f;    // ворота шириной 6 метров
-    const float RampartHeight = 3f; // высота помоста, на котором стоят защитники
-    const float RampartWidth = 2f;
+    const float FortHalf = 26f;     // форт 52 x 52 метра
+    const float FloorY = 2.7f;      // высота помостов вдоль стен
 
     static Transform root;
+
+    // Материалы
+    static Material grass, wood, darkWood, stone, roof, leaves, playerMat, crystal, dark, steel, ghost;
+
+    // Детали
+    static BuildPiece pWall, pGate, pStoneWall, pFloor, pStairs, pPillar, pBarricade, pTower, pHouse;
 
     [MenuItem("Eirion/Создать сцену форта")]
     public static void CreateFortScene()
@@ -36,200 +36,313 @@ public static class EirionSceneBuilder
 
         EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
 
-        Material grass  = Mat("Grass",  new Color(0.27f, 0.33f, 0.22f));
-        Material wood   = Mat("Wood",   new Color(0.40f, 0.28f, 0.17f));
-        Material stone  = Mat("Stone",  new Color(0.45f, 0.45f, 0.47f));
-        Material roof   = Mat("Roof",   new Color(0.35f, 0.15f, 0.12f));
-        Material leaves = Mat("Leaves", new Color(0.16f, 0.26f, 0.14f));
-        Material player = Mat("Player", new Color(0.70f, 0.25f, 0.20f));
-        Material crystal = Mat("Lailillium", new Color(0.55f, 0.35f, 1f), new Color(0.6f, 0.35f, 1f) * 3f);
-        Material dark   = Mat("Darkness", new Color(0.05f, 0.02f, 0.08f), new Color(0.25f, 0.05f, 0.35f));
-
+        MakeMaterials();
+        MakePiecePrefabs();
         SetupAtmosphere();
 
-        // --- Земля 300 x 300 метров ---
-        GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
-        ground.name = "Ground";
-        ground.transform.localScale = new Vector3(30f, 1f, 30f);
-        ground.GetComponent<Renderer>().sharedMaterial = grass;
-        ground.isStatic = true;
+        GameObject g = GameObject.CreatePrimitive(PrimitiveType.Plane);
+        g.name = "Ground";
+        g.transform.localScale = new Vector3(40f, 1f, 40f); // 400 x 400 метров
+        g.GetComponent<Renderer>().sharedMaterial = grass;
+        g.isStatic = true;
 
-        BuildFort(wood, stone, crystal);
-        BuildVillage(wood, roof);
-        BuildForest(wood, leaves);
-        BuildDarkness(dark);
-        BuildPlayer(player);
+        GameObject manager = new GameObject("BuildingManager");
+        manager.AddComponent<BuildingManager>();
 
-        // --- Сохраняем сцену и ставим её первой в списке сцен игры ---
+        BuildFort();
+        BuildVillage();
+        BuildForest();
+        BuildDarkness();
+        BuildPlayer();
+
         if (!AssetDatabase.IsValidFolder("Assets/Scenes")) AssetDatabase.CreateFolder("Assets", "Scenes");
         EditorSceneManager.SaveScene(EditorSceneManager.GetActiveScene(), ScenePath);
 
         var scenes = new List<EditorBuildSettingsScene> { new EditorBuildSettingsScene(ScenePath, true) };
         foreach (var s in EditorBuildSettings.scenes)
-            if (s.path != ScenePath) scenes.Add(s);
+            if (s.path != ScenePath && !s.path.EndsWith("TestScene.unity")) scenes.Add(s);
         EditorBuildSettings.scenes = scenes.ToArray();
 
         Selection.activeGameObject = GameObject.Find("Player");
         EditorUtility.DisplayDialog("Eirion", "Готово! Сцена Fort создана и сохранена.\nНажми ▶ Play сверху.", "Ок");
     }
 
-    // ---------------- Форт ----------------
-    static void BuildFort(Material wood, Material stone, Material crystal)
+    // ================= Материалы =================
+    static void MakeMaterials()
+    {
+        grass    = Mat("Grass",    new Color(0.27f, 0.33f, 0.22f));
+        wood     = Mat("Wood",     new Color(0.42f, 0.30f, 0.18f));
+        darkWood = Mat("DarkWood", new Color(0.28f, 0.19f, 0.11f));
+        stone    = Mat("Stone",    new Color(0.45f, 0.45f, 0.47f));
+        roof     = Mat("Roof",     new Color(0.35f, 0.15f, 0.12f));
+        leaves   = Mat("Leaves",   new Color(0.16f, 0.26f, 0.14f));
+        playerMat= Mat("Player",   new Color(0.70f, 0.25f, 0.20f));
+        steel    = Mat("Steel",    new Color(0.75f, 0.77f, 0.8f));
+        crystal  = Mat("Lailillium", new Color(0.55f, 0.35f, 1f), new Color(0.6f, 0.35f, 1f) * 3f);
+        dark     = Mat("Darkness", new Color(0.05f, 0.02f, 0.08f), new Color(0.25f, 0.05f, 0.35f));
+        ghost    = GhostMat();
+    }
+
+    // ================= Детали построек =================
+    static void MakePiecePrefabs()
+    {
+        if (!AssetDatabase.IsValidFolder("Assets/Prefabs")) AssetDatabase.CreateFolder("Assets", "Prefabs");
+        if (!AssetDatabase.IsValidFolder(PrefabFolder)) AssetDatabase.CreateFolder("Assets/Prefabs", "Building");
+
+        // 1. Частокол 4 x 4 м из брёвен
+        {
+            GameObject go = new GameObject("WoodWall");
+            for (int i = 0; i < 8; i++)
+            {
+                float h = 4f + ((i * 7) % 3) * 0.15f;
+                Part(go.transform, PrimitiveType.Cylinder, new Vector3(-1.75f + i * 0.5f, h / 2f, 0f), new Vector3(0.5f, h / 2f, 0.5f), wood, Vector3.zero, false);
+            }
+            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 2.8f, -0.3f), new Vector3(4f, 0.25f, 0.15f), darkWood, Vector3.zero, false);
+            BoxCollider bc = go.AddComponent<BoxCollider>();
+            bc.center = new Vector3(0f, 2f, 0f);
+            bc.size = new Vector3(4f, 4f, 0.5f);
+            pWall = SavePiece(go, "Частокол", 300f, new Vector3(4f, 4f, 0.5f), true);
+        }
+        // 2. Ворота (проход 2.4 x 3.3 м)
+        {
+            GameObject go = new GameObject("WoodGate");
+            Part(go.transform, PrimitiveType.Cube, new Vector3(-1.6f, 2.25f, 0f), new Vector3(0.8f, 4.5f, 0.8f), darkWood);
+            Part(go.transform, PrimitiveType.Cube, new Vector3(1.6f, 2.25f, 0f), new Vector3(0.8f, 4.5f, 0.8f), darkWood);
+            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 3.9f, 0f), new Vector3(2.4f, 1.2f, 0.6f), wood);
+            pGate = SavePiece(go, "Ворота", 450f, new Vector3(4f, 4.5f, 0.8f), true);
+        }
+        // 3. Каменная стена 4 x 4 м с зубцами
+        {
+            GameObject go = new GameObject("StoneWall");
+            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 2f, 0f), new Vector3(4f, 4f, 1f), stone);
+            Part(go.transform, PrimitiveType.Cube, new Vector3(-1.25f, 4.3f, 0f), new Vector3(1f, 0.6f, 1f), stone);
+            Part(go.transform, PrimitiveType.Cube, new Vector3(1.25f, 4.3f, 0f), new Vector3(1f, 0.6f, 1f), stone);
+            pStoneWall = SavePiece(go, "Каменная стена", 900f, new Vector3(4f, 4.6f, 1f), true);
+        }
+        // 4. Помост / пол 4 x 4 м
+        {
+            GameObject go = new GameObject("WoodFloor");
+            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 0.15f, 0f), new Vector3(4f, 0.3f, 4f), wood);
+            pFloor = SavePiece(go, "Помост", 200f, new Vector3(4f, 0.3f, 4f), true);
+        }
+        // 5. Лестница: поднимает на 3 м на длине 4 м
+        {
+            GameObject go = new GameObject("WoodStairs");
+            float angle = Mathf.Atan2(3f, 4f) * Mathf.Rad2Deg;
+            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1.5f, 0f), new Vector3(2f, 0.3f, 5f), wood, new Vector3(-angle, 0f, 0f));
+            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1.5f, 1.9f), new Vector3(1.8f, 3f, 0.2f), darkWood, Vector3.zero, false);
+            pStairs = SavePiece(go, "Лестница", 200f, new Vector3(2f, 3f, 4f), true);
+        }
+        // 6. Столб-опора 3 м
+        {
+            GameObject go = new GameObject("WoodPillar");
+            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1.5f, 0f), new Vector3(0.5f, 3f, 0.5f), darkWood);
+            pPillar = SavePiece(go, "Столб", 150f, new Vector3(0.5f, 3f, 0.5f), true);
+        }
+        // 7. Баррикада с кольями
+        {
+            GameObject go = new GameObject("Barricade");
+            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 0.25f, 0f), new Vector3(4f, 0.5f, 0.5f), darkWood);
+            for (int i = 0; i < 5; i++)
+                Part(go.transform, PrimitiveType.Cube, new Vector3(-1.6f + i * 0.8f, 0.8f, 0.3f), new Vector3(0.15f, 0.15f, 2f), wood, new Vector3(-40f, 0f, 0f));
+            pBarricade = SavePiece(go, "Баррикада", 150f, new Vector3(4f, 1.5f, 1.5f), true);
+        }
+        // 8. Каменная башня 4 x 4 x 8 м
+        {
+            GameObject go = new GameObject("StoneTower");
+            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 4f, 0f), new Vector3(4f, 8f, 4f), stone);
+            foreach (float x in new[] { -1.5f, 1.5f })
+                foreach (float z in new[] { -1.5f, 1.5f })
+                    Part(go.transform, PrimitiveType.Cube, new Vector3(x, 8.35f, z), new Vector3(1f, 0.7f, 1f), stone);
+            pTower = SavePiece(go, "Башня", 1500f, new Vector3(4f, 8.7f, 4f), true);
+        }
+        // 9. Дом (для деревни и казарм; в меню стройки пока нет)
+        {
+            GameObject go = new GameObject("House");
+            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1.5f, 0f), new Vector3(5f, 3f, 6f), wood);
+            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 3.2f, 0f), new Vector3(3.9f, 3.9f, 6.4f), roof, new Vector3(0f, 0f, 45f));
+            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1f, -3.01f), new Vector3(1.2f, 2f, 0.1f), darkWood, Vector3.zero, false);
+            pHouse = SavePiece(go, "Дом", 600f, new Vector3(5f, 6f, 6.4f), false);
+        }
+    }
+
+    static GameObject Part(Transform parent, PrimitiveType type, Vector3 pos, Vector3 scale, Material mat, Vector3 euler = default, bool collider = true)
+    {
+        GameObject p = GameObject.CreatePrimitive(type);
+        p.transform.SetParent(parent, false);
+        p.transform.localPosition = pos;
+        p.transform.localScale = scale;
+        p.transform.localRotation = Quaternion.Euler(euler);
+        p.GetComponent<Renderer>().sharedMaterial = mat;
+        if (!collider) Object.DestroyImmediate(p.GetComponent<Collider>());
+        return p;
+    }
+
+    static BuildPiece SavePiece(GameObject go, string displayName, float hp, Vector3 size, bool buildable)
+    {
+        BuildPiece bp = go.AddComponent<BuildPiece>();
+        bp.displayName = displayName;
+        bp.maxHealth = hp;
+        bp.size = size;
+        bp.buildable = buildable;
+        GameObject prefab = PrefabUtility.SaveAsPrefabAsset(go, PrefabFolder + "/" + go.name + ".prefab");
+        Object.DestroyImmediate(go);
+        return prefab.GetComponent<BuildPiece>();
+    }
+
+    // Поставить деталь в сцену (связанную с префабом)
+    static BuildPiece Put(BuildPiece prefab, float x, float y, float z, float yaw)
+    {
+        GameObject go = (GameObject)PrefabUtility.InstantiatePrefab(prefab.gameObject);
+        go.transform.SetParent(root, false);
+        go.transform.SetPositionAndRotation(new Vector3(x, y, z), Quaternion.Euler(0f, yaw, 0f));
+        return go.GetComponent<BuildPiece>();
+    }
+
+    // ================= Форт =================
+    static void BuildFort()
     {
         root = new GameObject("Fort").transform;
         float h = FortHalf;
-        float wy = WallHeight / 2f;
 
-        // Северная стена (к тьме) и южная (к деревне) — с воротами посередине
-        float segLen = h - GateHalf;              // длина куска стены от угла до ворот
-        float segCenter = GateHalf + segLen / 2f; // центр этого куска
-        foreach (float z in new[] { h, -h })
+        // Стены: по 13 деталей с каждой стороны, ворота на севере и юге посередине
+        for (int i = -6; i <= 6; i++)
         {
-            string side = z > 0 ? "North" : "South";
-            Box("Wall_" + side + "_L", new Vector3(-segCenter, wy, z), new Vector3(segLen, WallHeight, WallThick), wood);
-            Box("Wall_" + side + "_R", new Vector3(segCenter, wy, z), new Vector3(segLen, WallHeight, WallThick), wood);
-
-            float rz = z - Mathf.Sign(z) * (WallThick / 2f + RampartWidth / 2f);
-            Box("Rampart_" + side + "_L", new Vector3(-segCenter, RampartHeight / 2f, rz), new Vector3(segLen, RampartHeight, RampartWidth), wood);
-            Box("Rampart_" + side + "_R", new Vector3(segCenter, RampartHeight / 2f, rz), new Vector3(segLen, RampartHeight, RampartWidth), wood);
-
-            // Столбы ворот
-            Box("GatePost_" + side + "_L", new Vector3(-GateHalf - 0.5f, 3f, z), new Vector3(1f, 6f, 1.4f), wood);
-            Box("GatePost_" + side + "_R", new Vector3(GateHalf + 0.5f, 3f, z), new Vector3(1f, 6f, 1.4f), wood);
+            float c = i * 4f;
+            Put(i == 0 ? pGate : pWall, c, 0f, h, 0f);    // север
+            Put(i == 0 ? pGate : pWall, c, 0f, -h, 180f); // юг
+            Put(pWall, -h, 0f, c, 90f);                    // запад
+            Put(pWall, h, 0f, c, 90f);                     // восток
         }
 
-        // Западная и восточная стены — сплошные
-        foreach (float x in new[] { -h, h })
-        {
-            string side = x < 0 ? "West" : "East";
-            Box("Wall_" + side, new Vector3(x, wy, 0f), new Vector3(WallThick, WallHeight, h * 2f), wood);
-            float rx = x - Mathf.Sign(x) * (WallThick / 2f + RampartWidth / 2f);
-            Box("Rampart_" + side, new Vector3(rx, RampartHeight / 2f, 0f), new Vector3(RampartWidth, RampartHeight, h * 2f - 2f * (WallThick + RampartWidth)), wood);
-        }
-
-        // Башни по углам
+        // Башни по углам и у северных ворот (север — опасная сторона)
         foreach (float x in new[] { -h, h })
             foreach (float z in new[] { -h, h })
-                Box("Tower", new Vector3(x, 4f, z), new Vector3(3.5f, 8f, 3.5f), stone);
+                Put(pTower, x, 0f, z, 0f);
+        Put(pTower, -6f, 0f, h + 2.4f, 0f);
+        Put(pTower, 6f, 0f, h + 2.4f, 0f);
 
-        // Пандус: с земли во дворе на западный помост
-        float rampStartX = -2f;
-        float rampEndX = -h + WallThick / 2f + RampartWidth; // край западного помоста
-        float run = rampStartX - rampEndX;
-        float len = Mathf.Sqrt(run * run + RampartHeight * RampartHeight);
-        float angle = Mathf.Atan2(RampartHeight, run) * Mathf.Rad2Deg;
-        GameObject ramp = Box("Ramp", new Vector3((rampStartX + rampEndX) / 2f, RampartHeight / 2f - 0.1f, 0f), new Vector3(len, 0.3f, 3f), wood);
-        ramp.transform.rotation = Quaternion.Euler(0f, 0f, -angle);
-
-        // Кристалл лайлилиума в центре двора (просто для красоты, пока)
-        GameObject c = Box("Lailillium_Crystal", new Vector3(5f, 1.2f, -6f), new Vector3(0.8f, 2.4f, 0.8f), crystal);
-        c.transform.rotation = Quaternion.Euler(0f, 45f, 10f);
-        GameObject lightGo = new GameObject("Crystal_Light");
-        lightGo.transform.SetParent(c.transform, false);
-        Light l = lightGo.AddComponent<Light>();
-        l.type = LightType.Point;
-        l.color = new Color(0.65f, 0.4f, 1f);
-        l.range = 8f;
-        l.intensity = 3f;
-
-        // Костёр-заглушка
-        Box("Campfire", new Vector3(-4f, 0.25f, -8f), new Vector3(1.2f, 0.5f, 1.2f), stone);
-    }
-
-    // ---------------- Деревня (за фортом, на юге) ----------------
-    static void BuildVillage(Material wood, Material roof)
-    {
-        root = new GameObject("Village").transform;
-        Vector3[] spots =
+        // Помосты вдоль стен (на них стоят защитники)
+        float inner = h - 0.25f - 2f;
+        for (int i = -5; i <= 5; i++)
         {
-            new Vector3(-14f, 0f, -38f), new Vector3(-4f, 0f, -42f), new Vector3(7f, 0f, -38f),
-            new Vector3(17f, 0f, -44f), new Vector3(-10f, 0f, -55f), new Vector3(4f, 0f, -57f),
-            new Vector3(15f, 0f, -60f),
-        };
-        for (int i = 0; i < spots.Length; i++)
-        {
-            Vector3 p = spots[i];
-            float yaw = (i * 37f) % 40f - 20f;
-            GameObject house = new GameObject("House_" + (i + 1));
-            house.transform.SetParent(root, false);
-            house.transform.position = p;
-            house.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
-
-            Transform keep = root;
-            root = house.transform;
-            Box("Walls", p + Vector3.up * 1.5f, new Vector3(5f, 3f, 6f), wood).transform.rotation = house.transform.rotation;
-            // Крыша: вытянутый куб, повёрнутый на 45 градусов — получается «домик»
-            GameObject r = Box("Roof", p + Vector3.up * 3.2f, new Vector3(3.9f, 3.9f, 6.4f), roof);
-            r.transform.rotation = house.transform.rotation * Quaternion.Euler(0f, 0f, 45f);
-            root = keep;
+            float c = i * 4f;
+            if (i != 0)
+            {
+                Put(pFloor, c, FloorY, inner, 0f);
+                Put(pFloor, c, FloorY, -inner, 0f);
+            }
+            Put(pFloor, -inner, FloorY, c, 0f);
+            Put(pFloor, inner, FloorY, c, 0f);
         }
 
+        // Лестницы на помосты (по одной у каждой стены)
+        Put(pStairs, -10f, 0f, inner - 4f, 0f);
+        Put(pStairs, 10f, 0f, -inner + 4f, 180f);
+        Put(pStairs, inner - 4f, 0f, 10f, 90f);
+        Put(pStairs, -inner + 4f, 0f, 8f, 270f);
+
+        // Внутренний двор: казармы, склад, кузница
+        Put(pHouse, -16f, 0f, -12f, 90f);
+        Put(pHouse, -16f, 0f, 0f, 90f);
+        Put(pHouse, 16f, 0f, -12f, -90f);
+        Put(pHouse, 16f, 0f, 6f, -90f);
+
+        // Внутренняя линия обороны у северных ворот
+        Put(pBarricade, -6f, 0f, 14f, 0f);
+        Put(pBarricade, 6f, 0f, 14f, 0f);
+        // Колья снаружи перед северными воротами
+        for (int i = -2; i <= 2; i++)
+            Put(pBarricade, i * 5f, 0f, h + 9f + Mathf.Abs(i) * -1.5f, 0f);
+
+        // Декор (не ломается): кристалл лайлилиума, костёр, ящики
+        root = new GameObject("Fort_Decor").transform;
+        GameObject cr = Box("Lailillium_Crystal", new Vector3(0f, 1.4f, -4f), new Vector3(1f, 2.8f, 1f), crystal);
+        cr.transform.rotation = Quaternion.Euler(0f, 45f, 8f);
+        Box("Crystal_Base", new Vector3(0f, 0.2f, -4f), new Vector3(3f, 0.4f, 3f), stone);
+        GameObject lg = new GameObject("Crystal_Light");
+        lg.transform.position = new Vector3(0f, 2.5f, -4f);
+        lg.transform.SetParent(root, true);
+        Light l = lg.AddComponent<Light>();
+        l.type = LightType.Point; l.color = new Color(0.65f, 0.4f, 1f); l.range = 12f; l.intensity = 4f;
+
+        Box("Campfire", new Vector3(-6f, 0.25f, -16f), new Vector3(1.4f, 0.5f, 1.4f), stone);
+        for (int i = 0; i < 6; i++)
+            Box("Crate", new Vector3(10f + (i % 3) * 1.1f, 0.5f + (i / 3) * 1f, -20f), Vector3.one, darkWood);
+    }
+
+    // ================= Деревня (юг) =================
+    static void BuildVillage()
+    {
+        root = new GameObject("Village").transform;
+        Vector2[] spots =
+        {
+            new Vector2(-18, -48), new Vector2(-6, -52), new Vector2(7, -47), new Vector2(20, -53),
+            new Vector2(-24, -64), new Vector2(-10, -68), new Vector2(4, -66), new Vector2(17, -70),
+            new Vector2(-4, -84), new Vector2(12, -86),
+        };
+        for (int i = 0; i < spots.Length; i++)
+            Put(pHouse, spots[i].x, 0f, spots[i].y, (i * 37f) % 50f - 25f);
+
         // Площадка для дирижабля
+        root = new GameObject("Village_Decor").transform;
         GameObject pad = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
         pad.name = "Airship_LandingPad";
         pad.transform.SetParent(root, false);
-        pad.transform.position = new Vector3(30f, 0.1f, -25f);
-        pad.transform.localScale = new Vector3(14f, 0.1f, 14f);
-        pad.GetComponent<Renderer>().sharedMaterial = wood;
+        pad.transform.position = new Vector3(45f, 0.1f, -40f);
+        pad.transform.localScale = new Vector3(16f, 0.1f, 16f);
+        pad.GetComponent<Renderer>().sharedMaterial = darkWood;
         pad.isStatic = true;
     }
 
-    // ---------------- Лес (зона вылазок, на севере) ----------------
-    static void BuildForest(Material wood, Material leaves)
+    // ================= Лес (север, зона вылазок) =================
+    static void BuildForest()
     {
         root = new GameObject("Forest").transform;
         Random.State saved = Random.state;
-        Random.InitState(1234); // одинаковый лес при каждом пересоздании
-
-        int placed = 0;
-        int tries = 0;
-        while (placed < 90 && tries < 1000)
+        Random.InitState(1234);
+        int placed = 0, tries = 0;
+        while (placed < 160 && tries < 3000)
         {
             tries++;
-            Vector3 p = new Vector3(Random.Range(-130f, 130f), 0f, Random.Range(28f, 135f));
-            if (Mathf.Abs(p.x) < 6f && p.z < 60f) continue; // оставляем тропу от ворот
-            float s = Random.Range(0.8f, 1.4f);
+            Vector3 p = new Vector3(Random.Range(-190f, 190f), 0f, Random.Range(45f, 185f));
+            if (Mathf.Abs(p.x) < 7f && p.z < 100f) continue; // тропа от ворот
+            float s = Random.Range(0.8f, 1.5f);
 
             GameObject tree = new GameObject("Tree");
             tree.transform.SetParent(root, false);
             tree.transform.position = p;
             tree.isStatic = true;
-
             GameObject trunk = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            trunk.name = "Trunk";
             trunk.transform.SetParent(tree.transform, false);
             trunk.transform.localPosition = new Vector3(0f, 2f * s, 0f);
             trunk.transform.localScale = new Vector3(0.5f * s, 2f * s, 0.5f * s);
-            trunk.GetComponent<Renderer>().sharedMaterial = wood;
+            trunk.GetComponent<Renderer>().sharedMaterial = darkWood;
             trunk.isStatic = true;
-
             GameObject crown = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            crown.name = "Crown";
             crown.transform.SetParent(tree.transform, false);
             crown.transform.localPosition = new Vector3(0f, 5f * s, 0f);
             crown.transform.localScale = Vector3.one * 3.5f * s;
             crown.GetComponent<Renderer>().sharedMaterial = leaves;
-            Object.DestroyImmediate(crown.GetComponent<Collider>()); // сквозь крону можно проходить
+            Object.DestroyImmediate(crown.GetComponent<Collider>());
             crown.isStatic = true;
-
             placed++;
         }
         Random.state = saved;
     }
 
-    // ---------------- Граница тьмы ----------------
-    static void BuildDarkness(Material dark)
+    // ================= Граница тьмы и края карты =================
+    static void BuildDarkness()
     {
         root = new GameObject("Darkness").transform;
-        GameObject wall = Box("Darkness_Wall", new Vector3(0f, 30f, 148f), new Vector3(300f, 60f, 2f), dark);
+        GameObject wall = Box("Darkness_Wall", new Vector3(0f, 40f, 196f), new Vector3(400f, 80f, 2f), dark);
         Object.DestroyImmediate(wall.GetComponent<Collider>());
-        // Невидимая стена, чтобы не уйти за край карты
         foreach (var (pos, size) in new[]
         {
-            (new Vector3(0f, 10f, 150f),  new Vector3(300f, 20f, 1f)),
-            (new Vector3(0f, 10f, -150f), new Vector3(300f, 20f, 1f)),
-            (new Vector3(150f, 10f, 0f),  new Vector3(1f, 20f, 300f)),
-            (new Vector3(-150f, 10f, 0f), new Vector3(1f, 20f, 300f)),
+            (new Vector3(0f, 10f, 200f),  new Vector3(400f, 20f, 1f)),
+            (new Vector3(0f, 10f, -200f), new Vector3(400f, 20f, 1f)),
+            (new Vector3(200f, 10f, 0f),  new Vector3(1f, 20f, 400f)),
+            (new Vector3(-200f, 10f, 0f), new Vector3(1f, 20f, 400f)),
         })
         {
             GameObject b = Box("MapBorder", pos, size, dark);
@@ -238,13 +351,13 @@ public static class EirionSceneBuilder
         }
     }
 
-    // ---------------- Герой и камера ----------------
-    static void BuildPlayer(Material mat)
+    // ================= Герой =================
+    static void BuildPlayer()
     {
         GameObject player = GameObject.CreatePrimitive(PrimitiveType.Capsule);
         player.name = "Player";
-        player.transform.position = new Vector3(0f, 1f, -8f);
-        player.GetComponent<Renderer>().sharedMaterial = mat;
+        player.transform.position = new Vector3(0f, 1f, -12f);
+        player.GetComponent<Renderer>().sharedMaterial = playerMat;
         Object.DestroyImmediate(player.GetComponent<CapsuleCollider>());
         player.AddComponent<CharacterController>();
         player.AddComponent<PlayerMovement>();
@@ -265,21 +378,37 @@ public static class EirionSceneBuilder
         cam.transform.localPosition = Vector3.zero;
         cam.transform.localRotation = Quaternion.identity;
         cam.nearClipPlane = 0.05f;
-        cam.farClipPlane = 400f;
+        cam.farClipPlane = 500f;
         EnableAntiAliasing(cam);
-
         pivot.AddComponent<PlayerCamera>();
         cam.gameObject.AddComponent<FpsCounter>();
+
+        // Меч (пока из кубиков) — в правой руке
+        GameObject sword = new GameObject("Sword");
+        sword.transform.SetParent(pivot.transform, false);
+        sword.transform.localPosition = new Vector3(0.45f, -0.35f, 0.55f);
+        sword.transform.localRotation = Quaternion.Euler(60f, 0f, 0f);
+        Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, 0.45f, 0f), new Vector3(0.06f, 0.8f, 0.02f), steel, Vector3.zero, false);
+        Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, 0.04f, 0f), new Vector3(0.25f, 0.04f, 0.05f), darkWood, Vector3.zero, false);
+        Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, -0.08f, 0f), new Vector3(0.04f, 0.2f, 0.04f), darkWood, Vector3.zero, false);
+        foreach (Renderer r in sword.GetComponentsInChildren<Renderer>())
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+
+        PlayerCombat combat = player.AddComponent<PlayerCombat>();
+        combat.weapon = sword.transform;
+
+        PlayerBuilder builder = player.AddComponent<PlayerBuilder>();
+        builder.ghostMaterial = ghost;
+        builder.pieces = new List<BuildPiece> { pWall, pGate, pStoneWall, pFloor, pStairs, pPillar, pBarricade, pTower };
     }
 
-    // ---------------- Атмосфера: туман, свет ----------------
+    // ================= Атмосфера =================
     static void SetupAtmosphere()
     {
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.ExponentialSquared;
         RenderSettings.fogColor = new Color(0.42f, 0.44f, 0.48f);
-        RenderSettings.fogDensity = 0.008f;
-
+        RenderSettings.fogDensity = 0.006f;
         Light sun = Object.FindFirstObjectByType<Light>();
         if (sun != null)
         {
@@ -289,7 +418,7 @@ public static class EirionSceneBuilder
         }
     }
 
-    // Сглаживание «лесенки» на краях объектов (SMAA)
+    // Сглаживание «лесенки» на краях (SMAA)
     static void EnableAntiAliasing(Camera cam)
     {
         System.Type t = System.Type.GetType("UnityEngine.Rendering.Universal.UniversalAdditionalCameraData, Unity.RenderPipelines.Universal.Runtime");
@@ -299,12 +428,12 @@ public static class EirionSceneBuilder
         var so = new SerializedObject(data);
         SerializedProperty aa = so.FindProperty("m_Antialiasing");
         SerializedProperty q = so.FindProperty("m_AntialiasingQuality");
-        if (aa != null) aa.intValue = 2; // 2 = SMAA
-        if (q != null) q.intValue = 2;   // высокое качество
+        if (aa != null) aa.intValue = 2;
+        if (q != null) q.intValue = 2;
         so.ApplyModifiedPropertiesWithoutUndo();
     }
 
-    // ---------------- Помощники ----------------
+    // ================= Помощники =================
     static GameObject Box(string name, Vector3 pos, Vector3 size, Material mat)
     {
         GameObject box = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -317,7 +446,6 @@ public static class EirionSceneBuilder
         return box;
     }
 
-    // Материал (цвет поверхности) — сохраняется файлом в Assets/Materials
     static Material Mat(string name, Color color, Color? emission = null)
     {
         if (!AssetDatabase.IsValidFolder("Assets/Materials")) AssetDatabase.CreateFolder("Assets", "Materials");
@@ -340,5 +468,26 @@ public static class EirionSceneBuilder
         }
         EditorUtility.SetDirty(mat);
         return mat;
+    }
+
+    // Полупрозрачный материал для «призрака» в режиме стройки
+    static Material GhostMat()
+    {
+        Material m = Mat("Ghost", new Color(0.3f, 1f, 0.4f, 0.4f));
+        if (m.HasProperty("_Surface"))
+        {
+            m.SetFloat("_Surface", 1f); // Transparent
+            m.SetFloat("_Blend", 0f);   // Alpha
+            m.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            m.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            if (m.HasProperty("_SrcBlendAlpha")) m.SetFloat("_SrcBlendAlpha", (float)UnityEngine.Rendering.BlendMode.One);
+            if (m.HasProperty("_DstBlendAlpha")) m.SetFloat("_DstBlendAlpha", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            m.SetFloat("_ZWrite", 0f);
+            m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            m.SetOverrideTag("RenderType", "Transparent");
+            m.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        }
+        EditorUtility.SetDirty(m);
+        return m;
     }
 }

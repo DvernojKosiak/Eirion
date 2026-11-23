@@ -37,7 +37,7 @@ public class EnemyManager : MonoBehaviour
     public class PlayerInfo { public Transform transform; public ulong ownerId; public bool dead; }
 
     const string MsgState = "E.enemies", MsgHitReq = "E.enemyHit", MsgHurt = "E.hurt", MsgWaveReq = "E.waveReq", MsgSpit = "E.spit",
-                 MsgParryReq = "E.parry", MsgGrabReq = "E.grab", MsgGrabRes = "E.grabRes", MsgThrowReq = "E.throw", MsgFx = "E.fx";
+                 MsgParryReq = "E.parry", MsgGrabReq = "E.grab", MsgGrabRes = "E.grabRes", MsgThrowReq = "E.throw", MsgFx = "E.fx", MsgReact = "E.react";
 
     readonly Dictionary<int, Enemy> enemies = new Dictionary<int, Enemy>();
     readonly List<PlayerInfo> players = new List<PlayerInfo>();
@@ -194,44 +194,17 @@ public class EnemyManager : MonoBehaviour
         GameObject go = new GameObject("Enemy_" + id);
         go.transform.SetPositionAndRotation(pos, Quaternion.Euler(0f, yaw, 0f));
 
-        // Внешний вид: сгорбленная тварь из простых фигур
+        // Тело из частей: голова, туловище, руки, ноги (у плевальщика — ещё мешок с ядом)
         Transform vis = new GameObject("Visual").transform;
         vis.SetParent(go.transform, false);
-        Part(vis, PrimitiveType.Capsule, new Vector3(0f, 0.85f, 0f), new Vector3(0.9f, 0.75f, 0.9f), Vector3.zero, body);
-        Part(vis, PrimitiveType.Sphere, new Vector3(0f, 1.35f, 0.35f), new Vector3(0.6f, 0.5f, 0.65f), Vector3.zero, body);
-        Part(vis, PrimitiveType.Sphere, new Vector3(-0.13f, 1.42f, 0.64f), Vector3.one * 0.1f, Vector3.zero, eyeMaterial);
-        Part(vis, PrimitiveType.Sphere, new Vector3(0.13f, 1.42f, 0.64f), Vector3.one * 0.1f, Vector3.zero, eyeMaterial);
-        Part(vis, PrimitiveType.Cube, new Vector3(-0.5f, 0.85f, 0.35f), new Vector3(0.15f, 0.15f, 0.9f), new Vector3(25f, -10f, 0f), body);
-        Part(vis, PrimitiveType.Cube, new Vector3(0.5f, 0.85f, 0.35f), new Vector3(0.15f, 0.15f, 0.9f), new Vector3(25f, 10f, 0f), body);
-        for (int i = 0; i < 3; i++)
-            Part(vis, PrimitiveType.Cube, new Vector3(0f, 1.45f - i * 0.25f, -0.35f - i * 0.05f), new Vector3(0.08f, 0.35f, 0.08f), new Vector3(-35f, 0f, 0f), body);
-
-        if (kind == EnemyKind.Brute)
-        {
-            Part(vis, PrimitiveType.Cube, new Vector3(-0.3f, 1.65f, 0.4f), new Vector3(0.08f, 0.35f, 0.08f), new Vector3(-30f, 0f, -25f), body); // рога
-            Part(vis, PrimitiveType.Cube, new Vector3(0.3f, 1.65f, 0.4f), new Vector3(0.08f, 0.35f, 0.08f), new Vector3(-30f, 0f, 25f), body);
-            Part(vis, PrimitiveType.Cube, new Vector3(0f, 1.15f, 0f), new Vector3(1.2f, 0.35f, 0.7f), Vector3.zero, body);      // плечи
-        }
-        if (kind == EnemyKind.Spitter)
-            Part(vis, PrimitiveType.Sphere, new Vector3(0f, 1.1f, -0.4f), new Vector3(0.6f, 0.6f, 0.5f), Vector3.zero, Glow()); // ядовитый мешок
+        BodyPart[] parts = EnemyBody.Build(vis, kind, body, eyeMaterial, Glow());
 
         Enemy e = go.AddComponent<Enemy>();
         e.ApplyKind(kind, Mathf.Max(1, wave));
         vis.localScale = Vector3.one * e.bodyScale;
-        e.Setup(id, simulated, vis);
+        e.Setup(id, simulated, vis, parts);
         enemies[id] = e;
         return e;
-    }
-
-    static void Part(Transform parent, PrimitiveType type, Vector3 pos, Vector3 scale, Vector3 euler, Material mat)
-    {
-        GameObject p = GameObject.CreatePrimitive(type);
-        Destroy(p.GetComponent<Collider>());
-        p.transform.SetParent(parent, false);
-        p.transform.localPosition = pos;
-        p.transform.localScale = scale;
-        p.transform.localRotation = Quaternion.Euler(euler);
-        if (mat != null) p.GetComponent<Renderer>().sharedMaterial = mat;
     }
 
     void RefreshPlayers()
@@ -254,19 +227,51 @@ public class EnemyManager : MonoBehaviour
     }
 
     // ---------- Удары игроков по тварям ----------
-    // from — откуда ударили (тварь отлетает в обратную сторону), type — какой удар
-    public static void RequestHit(Enemy e, float damage, Vector3 from, HitType type)
+    // Удар считает хост. Тот, кто ударил, сразу сам показывает, как дёрнулось тело (LocalReact), — без задержки сети.
+    public static void RequestHit(Enemy e, HitInfo h)
     {
         if (Instance == null || e == null) return;
         e.Flash();
-        if (Net.IsHost) { Instance.ApplyHit(e.id, damage, from, (int)type); return; }
-        FastBufferWriter w = Net.Writer(40);
-        try { w.WriteValueSafe(e.id); w.WriteValueSafe(damage); w.WriteValueSafe(from); w.WriteValueSafe((int)type); Net.ToHost(MsgHitReq, w); } finally { w.Dispose(); }
+        if (Net.IsHost) { e.ApplyHit(h, Net.LocalId); return; }
+        FastBufferWriter w = Net.Writer(64);
+        try
+        {
+            w.WriteValueSafe(e.id); w.WriteValueSafe(h.damage); w.WriteValueSafe(h.dir); w.WriteValueSafe((int)h.part);
+            w.WriteValueSafe((int)h.type); w.WriteValueSafe(h.heavy); w.WriteValueSafe(h.embed);
+            Net.ToHost(MsgHitReq, w);
+        }
+        finally { w.Dispose(); }
     }
 
-    void ApplyHit(int id, float damage, Vector3 from, int type)
+    // Хост: тело дёрнулось / случилось что-то яркое (отрубил, казнь...). Рассылаем всем.
+    // callout — надпись на экране у того, кто ударил.
+    public static void React(Enemy e, int part, Vector3 dir, float strength, ulong attacker, int callout)
     {
-        if (enemies.TryGetValue(id, out Enemy e) && e != null) e.ApplyHit(damage, from, (HitType)type);
+        if (e == null) return;
+        if (strength > 0f && attacker != Net.LocalId) e.LocalReact(part, dir, strength);
+        if (attacker == Net.LocalId && callout != Callout.None) ShowCallout(callout);
+        if (!Net.Online) return;
+        FastBufferWriter w = Net.Writer(64);
+        try
+        {
+            w.WriteValueSafe(e.id); w.WriteValueSafe(part); w.WriteValueSafe(dir); w.WriteValueSafe(strength);
+            w.WriteValueSafe(attacker); w.WriteValueSafe(callout);
+            Net.ToAllClients(MsgReact, w);
+        }
+        finally { w.Dispose(); }
+    }
+
+    static string calloutText;
+    static float calloutUntil;
+    public static void ShowCallout(int code)
+    {
+        if (code <= 0 || code >= Callout.Text.Length) return;
+        ShowCallout(Callout.Text[code]);
+    }
+    public static void ShowCallout(string text)
+    {
+        calloutText = text;
+        calloutUntil = Time.unscaledTime + 1.3f;
     }
 
     // Игрок парировал удар твари
@@ -312,7 +317,7 @@ public class EnemyManager : MonoBehaviour
 
     public Enemy Find(int id) => enemies.TryGetValue(id, out Enemy e) && e != null ? e : null;
 
-    Transform PlayerTransform(ulong owner)
+    public Transform PlayerTransform(ulong owner)
     {
         foreach (PlayerInfo p in players) if (p.ownerId == owner && p.transform != null) return p.transform;
         RefreshPlayers();
@@ -333,17 +338,20 @@ public class EnemyManager : MonoBehaviour
     }
 
     // Глухой удар (тварь врезалась в стену, в землю, в колья): пыль и тряска камеры у тех, кто рядом
-    public static void Impact(Vector3 at, float strength)
+    // enemyId и fx: 0 — пыль, 1 — ядовитый взрыв, 2 — тварь расплющило (enemyId — какую)
+    public static void Impact(Vector3 at, float strength, int enemyId = -1, int fx = 0)
     {
-        LocalImpact(at, strength);
+        LocalImpact(at, strength, enemyId, fx);
         if (!Net.Online) return;
-        FastBufferWriter w = Net.Writer(24);
-        try { w.WriteValueSafe(at); w.WriteValueSafe(strength); Net.ToAllClients(MsgFx, w); } finally { w.Dispose(); }
+        FastBufferWriter w = Net.Writer(40);
+        try { w.WriteValueSafe(at); w.WriteValueSafe(strength); w.WriteValueSafe(enemyId); w.WriteValueSafe(fx); Net.ToAllClients(MsgFx, w); } finally { w.Dispose(); }
     }
 
     static Material dustMat;
-    static void LocalImpact(Vector3 at, float strength)
+    static void LocalImpact(Vector3 at, float strength, int enemyId, int fx)
     {
+        if (fx == 2 && Instance != null) Instance.Find(enemyId)?.Squash();
+        if (fx == 1) CombatFx.Poison(at, 26);
         if (dustMat == null)
         {
             Shader sh = Shader.Find("Universal Render Pipeline/Lit");
@@ -395,21 +403,21 @@ public class EnemyManager : MonoBehaviour
     {
         if (!Net.Online) return;
         int n = enemies.Count;
-        var ids = new int[n]; var pos = new Vector3[n]; var yaw = new float[n]; var hp = new float[n]; var climb = new bool[n]; var kinds = new int[n]; var states = new int[n]; var held = new int[n];
+        var ids = new int[n]; var pos = new Vector3[n]; var yaw = new float[n]; var hp = new float[n]; var climb = new bool[n]; var kinds = new int[n]; var states = new int[n]; var held = new int[n]; var lost = new int[n]; var sides = new int[n];
         int i = 0;
         foreach (var kv in enemies)
         {
             if (kv.Value == null) { n--; continue; }
             ids[i] = kv.Key; pos[i] = kv.Value.transform.position; yaw[i] = kv.Value.transform.eulerAngles.y; hp[i] = kv.Value.HealthFraction; climb[i] = kv.Value.Climbing; kinds[i] = (int)kv.Value.kind;
-            states[i] = (int)kv.Value.CurrentState; held[i] = kv.Value.HeldBy;
+            states[i] = (int)kv.Value.CurrentState; held[i] = kv.Value.HeldBy; lost[i] = kv.Value.LostMask; sides[i] = kv.Value.AttackSide;
             i++;
         }
-        System.Array.Resize(ref ids, i); System.Array.Resize(ref pos, i); System.Array.Resize(ref yaw, i); System.Array.Resize(ref hp, i); System.Array.Resize(ref climb, i); System.Array.Resize(ref kinds, i); System.Array.Resize(ref states, i); System.Array.Resize(ref held, i);
-        FastBufferWriter w = Net.Writer(64 + i * 32);
+        System.Array.Resize(ref ids, i); System.Array.Resize(ref pos, i); System.Array.Resize(ref yaw, i); System.Array.Resize(ref hp, i); System.Array.Resize(ref climb, i); System.Array.Resize(ref kinds, i); System.Array.Resize(ref states, i); System.Array.Resize(ref held, i); System.Array.Resize(ref lost, i); System.Array.Resize(ref sides, i);
+        FastBufferWriter w = Net.Writer(64 + i * 40);
         try
         {
             w.WriteValueSafe(wave);
-            w.WriteValueSafe(ids); w.WriteValueSafe(pos); w.WriteValueSafe(yaw); w.WriteValueSafe(hp); w.WriteValueSafe(climb); w.WriteValueSafe(kinds); w.WriteValueSafe(states); w.WriteValueSafe(held);
+            w.WriteValueSafe(ids); w.WriteValueSafe(pos); w.WriteValueSafe(yaw); w.WriteValueSafe(hp); w.WriteValueSafe(climb); w.WriteValueSafe(kinds); w.WriteValueSafe(states); w.WriteValueSafe(held); w.WriteValueSafe(lost); w.WriteValueSafe(sides);
             Net.ToAllClients(MsgState, w, NetworkDelivery.ReliableFragmentedSequenced);
         }
         finally { w.Dispose(); }
@@ -421,14 +429,14 @@ public class EnemyManager : MonoBehaviour
         {
             r.ReadValueSafe(out int w);
             r.ReadValueSafe(out int[] ids); r.ReadValueSafe(out Vector3[] pos); r.ReadValueSafe(out float[] yaw); r.ReadValueSafe(out float[] hp); r.ReadValueSafe(out bool[] climb); r.ReadValueSafe(out int[] kinds);
-            r.ReadValueSafe(out int[] states); r.ReadValueSafe(out int[] held);
+            r.ReadValueSafe(out int[] states); r.ReadValueSafe(out int[] held); r.ReadValueSafe(out int[] lost); r.ReadValueSafe(out int[] sides);
             if (Net.IsHost) return;
             wave = w;
             var alive = new HashSet<int>(ids);
             for (int i = 0; i < ids.Length; i++)
             {
                 if (!enemies.TryGetValue(ids[i], out Enemy e) || e == null) e = CreateEnemy(ids[i], pos[i], yaw[i], false, i < kinds.Length ? (EnemyKind)kinds[i] : EnemyKind.Crawler);
-                e.SetNetState(pos[i], yaw[i], hp[i], i < climb.Length && climb[i], i < states.Length ? states[i] : 0, i < held.Length ? held[i] : -1);
+                e.SetNetState(pos[i], yaw[i], hp[i], i < climb.Length && climb[i], i < states.Length ? states[i] : 0, i < held.Length ? held[i] : -1, i < lost.Length ? lost[i] : 0, i < sides.Length ? sides[i] : 0);
             }
             var gone = new List<int>();
             foreach (var kv in enemies) if (!alive.Contains(kv.Key)) gone.Add(kv.Key);
@@ -436,8 +444,9 @@ public class EnemyManager : MonoBehaviour
         });
         cmm.RegisterNamedMessageHandler(MsgHitReq, (sender, r) =>
         {
-            r.ReadValueSafe(out int id); r.ReadValueSafe(out float dmg); r.ReadValueSafe(out Vector3 from); r.ReadValueSafe(out int type);
-            if (Net.IsHost) ApplyHit(id, dmg, from, type);
+            r.ReadValueSafe(out int id); r.ReadValueSafe(out float dmg); r.ReadValueSafe(out Vector3 dir); r.ReadValueSafe(out int part);
+            r.ReadValueSafe(out int type); r.ReadValueSafe(out bool heavy); r.ReadValueSafe(out bool embed);
+            if (Net.IsHost) Find(id)?.ApplyHit(new HitInfo { damage = dmg, dir = dir, part = (BodyPartType)part, type = (HitType)type, heavy = heavy, embed = embed }, sender);
         });
         cmm.RegisterNamedMessageHandler(MsgHurt, (sender, r) =>
         {
@@ -454,8 +463,17 @@ public class EnemyManager : MonoBehaviour
         });
         cmm.RegisterNamedMessageHandler(MsgFx, (sender, r) =>
         {
-            r.ReadValueSafe(out Vector3 at); r.ReadValueSafe(out float str);
-            if (!Net.IsHost) LocalImpact(at, str);
+            r.ReadValueSafe(out Vector3 at); r.ReadValueSafe(out float str); r.ReadValueSafe(out int eid); r.ReadValueSafe(out int fx);
+            if (!Net.IsHost) LocalImpact(at, str, eid, fx);
+        });
+        cmm.RegisterNamedMessageHandler(MsgReact, (sender, r) =>
+        {
+            r.ReadValueSafe(out int id); r.ReadValueSafe(out int part); r.ReadValueSafe(out Vector3 dir); r.ReadValueSafe(out float str);
+            r.ReadValueSafe(out ulong attacker); r.ReadValueSafe(out int callout);
+            if (Net.IsHost) return;
+            Enemy e = Find(id);
+            if (e != null && str > 0f && attacker != Net.LocalId) e.LocalReact(part, dir, str);
+            if (attacker == Net.LocalId) ShowCallout(callout);
         });
         cmm.RegisterNamedMessageHandler(MsgSpit, (sender, r) =>
         {
@@ -474,6 +492,16 @@ public class EnemyManager : MonoBehaviour
     {
         if (!GameRunning) return;
 
+        // Надпись приёма: «КАЗНЬ!», «ОТРУБИЛ НОГУ!»...
+        if (Time.unscaledTime < calloutUntil && !string.IsNullOrEmpty(calloutText))
+        {
+            float k = Mathf.Clamp01((calloutUntil - Time.unscaledTime) / 0.3f);
+            Color old = GUI.color;
+            GUI.color = new Color(1f, 0.82f, 0.3f, k);
+            GUI.Label(new Rect(0, Screen.height * 0.26f, Screen.width, 34), calloutText, Hud.CenterBig);
+            GUI.color = old;
+        }
+
         // Полоски здоровья над тварями
         Camera cam = Camera.main;
         if (cam == null) return;
@@ -482,7 +510,10 @@ public class EnemyManager : MonoBehaviour
             Enemy e = kv.Value;
             if (e == null) continue;
             Vector3 world = e.transform.position + Vector3.up * (2.1f * e.bodyScale);
-            bool open = e.CurrentState == Enemy.State.Stagger;
+            Enemy.State st = e.CurrentState;
+            string label = st == Enemy.State.Stagger ? "ОТКРЫТ — тяжёлый удар!" : st == Enemy.State.Kneel ? "НА КОЛЕНЕ — руби по голове сверху!" :
+                           st == Enemy.State.Pinned ? "ПРИГВОЖДЁН" : null;
+            bool open = label != null;
             if (e.HealthFraction >= 0.999f && !open) continue;
             if (Vector3.Distance(world, cam.transform.position) > 30f) continue;
             Vector3 s = cam.WorldToScreenPoint(world);
@@ -491,7 +522,7 @@ public class EnemyManager : MonoBehaviour
             if (open)
             {
                 Color old = GUI.color; GUI.color = new Color(1f, 0.85f, 0.2f);
-                GUI.Label(new Rect(s.x - 100, Screen.height - s.y - 30, 200, 24), "ОТКРЫТ — добей!", Hud.Center);
+                GUI.Label(new Rect(s.x - 160, Screen.height - s.y - 30, 320, 24), label, Hud.Center);
                 GUI.color = old;
             }
         }

@@ -20,14 +20,14 @@ public class PlayerMovement : MonoBehaviour
     [Header("Перекат (Ctrl или C)")]
     public float dodgeSpeed = 11f;
     public float dodgeTime = 0.32f;
-    public float dodgeCost = 20f;
+    public float dodgeCost = 16f;
     public bool IsDodging => Time.time < dodgeUntil - 0.05f;
     float dodgeUntil, nextDodge;
     Vector3 dodgeDir;
 
     [Header("Выносливость и падение")]
-    public float sprintCost = 14f;     // в секунду бега
-    public float jumpCost = 10f;
+    public float sprintCost = 8f;      // в секунду бега
+    public float jumpCost = 7f;
     public float safeFallSpeed = 13.5f; // быстрее — урон
     public float fallDamage = 6f;
 

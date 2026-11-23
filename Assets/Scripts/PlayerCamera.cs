@@ -40,6 +40,9 @@ public class PlayerCamera : MonoBehaviour
     static float shake;
     public static void Shake(float amount) { shake = Mathf.Max(shake, amount); }
 
+    // Насколько послушна мышь (меньше 1 — «тяжело», например клинок застрял в теле)
+    public static float LookScale = 1f;
+
     float pitch;            // наклон головы вверх/вниз
     bool thirdPerson;
     float currentDistance;  // текущее расстояние (с учётом стен)
@@ -74,7 +77,7 @@ public class PlayerCamera : MonoBehaviour
         if (mouse == null || Cursor.lockState != CursorLockMode.Locked) return;
 
         // Взгляд мышкой
-        Vector2 delta = mouse.delta.ReadValue() * mouseSensitivity;
+        Vector2 delta = mouse.delta.ReadValue() * mouseSensitivity * LookScale;
 
         pitch -= delta.y;
         pitch = Mathf.Clamp(pitch, minPitch, maxPitch);
@@ -84,7 +87,8 @@ public class PlayerCamera : MonoBehaviour
 
         // Колёсико — приблизить/отдалить (только в третьем лице)
         float scroll = mouse.scroll.ReadValue().y;
-        if (thirdPerson && Mathf.Abs(scroll) > 0.01f)
+        bool building = PlayerBuilder.Local != null && PlayerBuilder.Local.IsBuilding; // с молотом колёсико листает детали
+        if (thirdPerson && !building && Mathf.Abs(scroll) > 0.01f)
             distance = Mathf.Clamp(distance - Mathf.Sign(scroll) * zoomStep, minDistance, maxDistance);
     }
 

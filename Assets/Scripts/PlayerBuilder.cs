@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 // Молот (клавиша 2) — строительство.
+//   Колёсико   — листать детали (в своей группе), Shift + колёсико — другая группа (дерево / камень...)
 //   Tab        — меню построек (выбрать деталь мышкой)
 //   R          — повернуть на 90°
 //   Деревянное строится только рядом с верстаком, каменное — рядом с каменотёсом
@@ -88,9 +89,19 @@ public class PlayerBuilder : MonoBehaviour
         }
 
         if (kb.rKey.wasPressedThisFrame) yaw = (yaw + 90f) % 360f;
-        if (ghostFor != selected) MakeGhost();
 
         bool locked = Cursor.lockState == CursorLockMode.Locked;
+
+        // Колёсико — быстро листать детали
+        float wheel = mouse.scroll.ReadValue().y;
+        if (locked && Mathf.Abs(wheel) > 0.01f)
+        {
+            bool shift = kb.leftShiftKey.isPressed || kb.rightShiftKey.isPressed;
+            if (shift) CycleCategory(wheel > 0f ? -1 : 1);
+            else Cycle(wheel > 0f ? -1 : 1);
+            stripUntil = Time.time + 1.6f;
+        }
+        if (ghostFor != selected) MakeGhost();
         looked = AimHelper.LookedPiece(cam, transform, reach);
         repairTarget = looked;
 
@@ -146,6 +157,55 @@ public class PlayerBuilder : MonoBehaviour
                 if (combat != null) combat.PlaySwing();
             }
             else Say("Не хватает ресурсов: нужно " + p.CostText);
+        }
+    }
+
+    float stripUntil;
+
+    // Следующая / предыдущая деталь в той же группе
+    void Cycle(int step)
+    {
+        string cat = pieces[selected].category;
+        var group = new List<int>();
+        for (int i = 0; i < pieces.Count; i++) if (pieces[i].category == cat) group.Add(i);
+        int k = group.IndexOf(selected);
+        k = ((k + step) % group.Count + group.Count) % group.Count;
+        selected = group[k];
+        menuTab = cat;
+    }
+
+    // Другая группа (первая деталь в ней)
+    void CycleCategory(int step)
+    {
+        var cats = new List<string>();
+        foreach (BuildPiece p in pieces) if (!cats.Contains(p.category)) cats.Add(p.category);
+        int k = cats.IndexOf(pieces[selected].category);
+        k = ((k + step) % cats.Count + cats.Count) % cats.Count;
+        selected = pieces.FindIndex(p => p.category == cats[k]);
+        menuTab = cats[k];
+    }
+
+    // Полоска карточек над панелью предметов: соседние детали группы, выбранная — по центру
+    void DrawStrip()
+    {
+        string cat = pieces[selected].category;
+        var group = new List<int>();
+        for (int i = 0; i < pieces.Count; i++) if (pieces[i].category == cat) group.Add(i);
+        int k = group.IndexOf(selected);
+        float w = 130f, h = 40f, gap = 8f;
+        float cx = Screen.width / 2f, y = Screen.height - 170f;
+        GUI.Label(new Rect(0, y - 24, Screen.width, 22), cat + "   (" + (k + 1) + " из " + group.Count + ")   Shift + колёсико — другая группа", Hud.CenterTiny);
+        for (int d = -2; d <= 2; d++)
+        {
+            if (group.Count < 5 && Mathf.Abs(d) > group.Count / 2) continue;
+            int idx = group[((k + d) % group.Count + group.Count) % group.Count];
+            Rect r = new Rect(cx - w / 2f + d * (w + gap), y, w, h);
+            bool on = d == 0;
+            Hud.Fill(r, on ? new Color(0.85f, 0.65f, 0.2f, 0.92f) : new Color(0f, 0f, 0f, 0.5f - Mathf.Abs(d) * 0.12f), 8);
+            Color old = GUI.color;
+            if (!on) GUI.color = new Color(1f, 1f, 1f, 0.75f - Mathf.Abs(d) * 0.2f);
+            GUI.Label(r, pieces[idx].displayName, on ? Hud.Center : Hud.CenterTiny);
+            GUI.color = old;
         }
     }
 
@@ -265,8 +325,9 @@ public class PlayerBuilder : MonoBehaviour
         if (have == 0 && !stationOk && cur.requiredStation != StationType.None)
             info += "  ·  нужен " + BuildPiece.StationName(cur.requiredStation).ToLower() + " рядом";
         GUI.Label(new Rect(0, Screen.height - 112, Screen.width, 26), info, Hud.Center);
+        if (Time.time < stripUntil) DrawStrip();
         GUI.Label(new Rect(0, Screen.height - 88, Screen.width, 22),
-                  "Tab — постройки   R — повернуть   ЛКМ — поставить   ПКМ (держать) — разобрать   F — взять   G — починить", Hud.CenterTiny);
+                  "Колёсико — выбрать деталь   Tab — все постройки   R — повернуть   ЛКМ — поставить   ПКМ (держать) — разобрать   F — взять   G — починить", Hud.CenterTiny);
 
         // Что под прицелом
         BuildPiece shown = looked != null ? looked : repairTarget;

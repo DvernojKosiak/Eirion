@@ -3,23 +3,52 @@ using UnityEngine;
 
 public enum EnemyKind { Crawler, Runner, Brute, Spitter }
 
-// Чем ударили тварь — от этого зависит, как она отреагирует
-public enum HitType { Light, ComboEnd, Heavy, Kick, Finisher, Tool }
+// Каким движением ударили. Направление удара выбирается мышью (см. PlayerCombat).
+//   Slash — рубящий вбок, Chop — сверху вниз, Uppercut — снизу вверх, Thrust — выпад (колющий),
+//   Cross — два рубящих крест-накрест, RipOut — вырвать застрявший клинок.
+public enum HitType { Slash, Chop, Uppercut, Thrust, Kick, Tool, RipOut, Cross }
+
+// Всё про один удар
+public struct HitInfo
+{
+    public float damage;
+    public Vector3 dir;          // куда двигался клинок (или нога) в момент удара
+    public BodyPartType part;    // куда попали
+    public HitType type;
+    public bool heavy;           // сильный удар (клинок шёл очень быстро)
+    public bool embed;           // клинок вошёл в туловище и остался там (тварь насажена)
+}
+
+// Надписи на экране у того, кто ударил
+public static class Callout
+{
+    public const int None = 0, Execution = 1, Head = 2, Arm = 3, Leg = 4, Sack = 5, Kneel = 6, Disarm = 7, Launch = 8, Air = 9,
+                     Pinned = 10, Wall = 11, Spikes = 12, Crushed = 13, RipOut = 14, Finisher = 15, Cross = 16, Impaled = 17;
+    public static readonly string[] Text =
+    {
+        "", "КАЗНЬ!", "ГОЛОВА С ПЛЕЧ!", "ОТРУБИЛ РУКУ!", "ОТРУБИЛ НОГУ!", "МЕШОК ЛОПНУЛ!", "НА КОЛЕНИ!", "ВЫБИЛ УДАР!", "ПОДБРОС!", "В ПОЛЁТЕ!",
+        "ПРИГВОЖДЁН!", "ОБ СТЕНУ!", "НА КОЛЬЯ!", "РАЗДАВЛЕН!", "ВЫРВАЛ КЛИНОК!", "ДОБИВАНИЕ!", "КРЕСТ!", "НАСАДИЛ!"
+    };
+}
 
 // Тварь с Тёмной половины. Виды:
 //   Ползун — обычная. Бегун — быстрый и слабый. Громила — огромный, медленный, ломает стены, его почти не отбросить.
-//   Плевальщик — держится на расстоянии и плюётся ядом (плевок летит дугой — можно отбежать).
+//   Плевальщик — держится на расстоянии и плюётся ядом. На спине мешок с ядом — проткни, и он взорвётся.
+//
+// Тело собрано из частей (BodyPart): голова, туловище, две руки, две ноги. Каждая часть:
+//   - принимает свой урон (голова ×1.8, руки и ноги меньше) и может быть отрублена;
+//   - по-своему отвечает: по голове — оглушение, по ноге — хромает и падает на колено, по руке — сбивает замах;
+//   - физически дёргается от удара в ту сторону, куда шёл клинок.
+// Без ноги тварь хромает, без двух — ползёт. Без рук бьёт слабо. Без головы — всё.
 //
 // Как она дерётся (думает только хост):
-//   - Нападают на одного игрока максимум двое («очередь» раздаёт EnemyManager). Остальные кружат вокруг и ждут.
-//   - Перед ударом тварь ЗАМАХИВАЕТСЯ (отклоняется назад и краснеет) — в этот момент можно
-//     сбить её ударом, отпрыгнуть перекатом или поставить блок/парировать.
-//   - От ударов вздрагивает, от тяжёлого удара и парирования — «открыта» (шатается) — можно добить.
-//   - Пинок и бросок превращают её в физическое тело: летит, бьётся о стены, насаживается на колья.
-// У остальных игроков это «копия», которая повторяет то, что присылает хост.
+//   - Нападают на одного игрока максимум двое (очередь раздаёт EnemyManager). Остальные кружат вокруг.
+//   - Перед ударом тварь ЗАМАХИВАЕТСЯ (поднимает когти и краснеет) — сбей замах ударом по руке, парируй или уйди перекатом.
+//   - Выпад в туловище — клинок застревает, тварь «насажена». Дотолкай её до стены — пригвоздишь.
+//   - Сильный отброс в стену — тварь расплющивается. Пинок и бросок — летит физическим телом.
 public class Enemy : MonoBehaviour
 {
-    public enum State { Move, WindUp, Recover, Flinch, Stagger, Grabbed, Thrown, Down }
+    public enum State { Move, WindUp, Recover, Flinch, Stagger, Grabbed, Thrown, Down, Kneel, Impaled, Pinned }
 
     public int id;
     public float maxHealth = 60f;
@@ -45,15 +74,26 @@ public class Enemy : MonoBehaviour
     public bool Simulated { get; private set; }
     public State CurrentState { get; private set; } = State.Move;
     public bool Climbing => climbing;
-    public bool IsOpen => CurrentState == State.Stagger; // можно добить
-    public bool CanBeGrabbed => kind != EnemyKind.Brute || CurrentState == State.Stagger;
-    public int HeldBy { get; private set; } = -1;           // кто держит (номер игрока), -1 — никто
+    public bool IsOpen => CurrentState == State.Stagger;   // шатается — тяжёлым ударом можно добить
+    public bool CanBeGrabbed => (kind != EnemyKind.Brute || CurrentState == State.Stagger || CurrentState == State.Kneel) &&
+                                CurrentState != State.Impaled && CurrentState != State.Pinned;
+    public bool OnBlade => CurrentState == State.Impaled || CurrentState == State.Pinned;
+    public int HeldBy { get; private set; } = -1;           // кто держит (руками или на клинке), -1 — никто
     public ulong TargetOwner { get; private set; } = Net.NoOne;
     public bool HasToken;          // можно нападать (раздаёт EnemyManager)
     public float TokenCooldownUntil;
+    public int LostMask { get; private set; }               // какие части отрублены (биты BodyPartType)
+    public int AttackSide { get; private set; }             // откуда бьёт: -1 левой лапой, 1 правой, 0 сверху обеими
+    public float WindProgress => CurrentState == State.WindUp ? Mathf.Clamp01((Time.time - windStart) / Mathf.Max(0.1f, windUpTime)) : 0f;
+    public BodyPart[] Parts => parts;
+
+    const float BodyHeight = 1.9f;
 
     CharacterController cc;
     Transform visual;
+    BodyPart[] parts;
+    readonly float[] partHp = new float[7];
+    readonly float[] partMax = new float[7];
     float verticalVelocity;
     float nextAttack, nextShot;
     Vector3 detourDir;
@@ -73,6 +113,18 @@ public class Enemy : MonoBehaviour
     CapsuleCollider throwCol;
     float thrownAt, lastImpact;
     float visualSpin;
+    float limpUntil, kneelCooldown;
+    float twist;                 // вращение от бокового удара (град/сек)
+    float squash;                // расплющило о стену (0..1)
+    float impaledAt;
+    Vector3 lastHitDir = Vector3.forward;
+    ulong lastAttacker = Net.NoOne;
+    float walkPhase, visSpeed;
+    Vector3 lastVisPos;
+    bool dead;
+    bool spiked;                 // висит на кольях
+    float windStart;
+    Vector3 visVel;
 
     Vector3 netPos;
     float netYaw;
@@ -89,6 +141,12 @@ public class Enemy : MonoBehaviour
 
     void OnEnable() { All.Add(this); }
     void OnDisable() { All.Remove(this); }
+
+    public bool Lost(BodyPartType p) => (LostMask & (1 << (int)p)) != 0;
+    int LegsLost => (Lost(BodyPartType.LegL) ? 1 : 0) + (Lost(BodyPartType.LegR) ? 1 : 0);
+    int ArmsLost => (Lost(BodyPartType.ArmL) ? 1 : 0) + (Lost(BodyPartType.ArmR) ? 1 : 0);
+    float SpeedMul => LegsLost == 2 ? 0.25f : LegsLost == 1 ? 0.45f : Time.time < limpUntil ? 0.6f : 1f;
+    float DamageMul => ArmsLost == 2 ? 0.35f : ArmsLost == 1 ? 0.65f : 1f;
 
     // Характеристики вида. wave — номер набега (с каждым тварь крепче)
     public void ApplyKind(EnemyKind k, int wave)
@@ -125,26 +183,39 @@ public class Enemy : MonoBehaviour
 
     public void Knock(Vector3 force) { knock += force * knockScale; }
 
-    public void Setup(int enemyId, bool simulated, Transform visualRoot)
+    public void Setup(int enemyId, bool simulated, Transform visualRoot, BodyPart[] bodyParts)
     {
         id = enemyId;
         Simulated = simulated;
         visual = visualRoot;
+        parts = bodyParts ?? new BodyPart[7];
         Health = maxHealth;
         netPos = transform.position;
         netYaw = transform.eulerAngles.y;
+        lastVisPos = transform.position;
         circleSign = (enemyId % 2 == 0) ? 1f : -1f;
 
+        // «Запас прочности» частей тела
+        float limb = kind == EnemyKind.Brute ? 0.22f : 0.32f;
+        partMax[(int)BodyPartType.Head] = maxHealth * 0.55f;
+        partMax[(int)BodyPartType.ArmL] = partMax[(int)BodyPartType.ArmR] = maxHealth * limb;
+        partMax[(int)BodyPartType.LegL] = partMax[(int)BodyPartType.LegR] = maxHealth * (limb + 0.05f);
+        partMax[(int)BodyPartType.Sack] = 1f;
+        partMax[(int)BodyPartType.Torso] = 99999f;
+        for (int i = 0; i < 7; i++) partHp[i] = partMax[i];
+        foreach (BodyPart bp in parts) if (bp != null) bp.owner = this;
+
+        float h = BodyHeight * bodyScale;
         if (simulated)
         {
             cc = gameObject.AddComponent<CharacterController>();
-            cc.radius = 0.45f * bodyScale; cc.height = 1.7f * bodyScale; cc.center = new Vector3(0f, 0.85f * bodyScale, 0f);
+            cc.radius = 0.45f * bodyScale; cc.height = h; cc.center = new Vector3(0f, h / 2f, 0f);
             cc.stepOffset = 0.4f;
         }
         else
         {
             CapsuleCollider col = gameObject.AddComponent<CapsuleCollider>();
-            col.radius = 0.45f * bodyScale; col.height = 1.7f * bodyScale; col.center = new Vector3(0f, 0.85f * bodyScale, 0f);
+            col.radius = 0.45f * bodyScale; col.height = h; col.center = new Vector3(0f, h / 2f, 0f);
         }
 
         renderers = GetComponentsInChildren<Renderer>();
@@ -159,6 +230,11 @@ public class Enemy : MonoBehaviour
 
     void SetState(State s, float duration)
     {
+        if (s == State.WindUp && CurrentState != State.WindUp)
+        {
+            windStart = Time.time;
+            AttackSide = kind == EnemyKind.Brute ? (Random.value < 0.5f ? 0 : (Random.value < 0.5f ? -1 : 1)) : Random.Range(-1, 2);
+        }
         CurrentState = s;
         stateUntil = Time.time + duration;
     }
@@ -168,7 +244,14 @@ public class Enemy : MonoBehaviour
     // =====================================================================
     public void Simulate(List<EnemyManager.PlayerInfo> players, Vector3 villageCenter)
     {
-        HealthFraction = Health / maxHealth;
+        HealthFraction = Mathf.Max(0f, Health / maxHealth);
+
+        // Вращение от бокового удара
+        if (Mathf.Abs(twist) > 1f && CurrentState != State.Thrown)
+        {
+            transform.Rotate(0f, twist * Time.deltaTime, 0f);
+            twist = Mathf.MoveTowards(twist, 0f, 1100f * Time.deltaTime);
+        }
 
         // ---- Лезет из пропасти ----
         if (climbing) { Climb(); return; }
@@ -177,11 +260,14 @@ public class Enemy : MonoBehaviour
         switch (CurrentState)
         {
             case State.Grabbed: HoldInHands(); return;
+            case State.Impaled: HoldOnBlade(); return;
+            case State.Pinned: StayPinned(); return;
             case State.Thrown: FlyCheck(); return;
             case State.Down:
             case State.Flinch:
             case State.Stagger:
             case State.Recover:
+            case State.Kneel:
                 MoveBody(Vector3.zero, 0f);
                 if (Time.time >= stateUntil) SetState(State.Move, 0f);
                 return;
@@ -280,6 +366,8 @@ public class Enemy : MonoBehaviour
             goal = wp;
         }
 
+        moveSpeed *= SpeedMul; // хромает или ползёт
+
         Vector3 to = goal - transform.position; to.y = 0f;
         Vector3 dir = to.sqrMagnitude > 0.0001f ? to.normalized : transform.forward;
         if (Time.time < detourUntil) dir = detourDir;
@@ -336,14 +424,14 @@ public class Enemy : MonoBehaviour
         nextAttack = Time.time + attackCooldown;
         if (strikePiece != null)
         {
-            if (strikePiece.isActiveAndEnabled) BuildingManager.Damage(strikePiece, buildingDamage);
+            if (strikePiece.isActiveAndEnabled) BuildingManager.Damage(strikePiece, buildingDamage * DamageMul);
             strikePiece = null;
         }
         else if (target != null && target.transform != null)
         {
             Vector3 to = target.transform.position - transform.position; to.y = 0f;
             if (to.magnitude < attackRange + 0.8f && Vector3.Angle(transform.forward, to) < 70f)
-                EnemyManager.HurtPlayer(target.ownerId, playerDamage, id);
+                EnemyManager.HurtPlayer(target.ownerId, playerDamage * DamageMul, id);
         }
         // Ударила — уступает очередь другим
         HasToken = false;
@@ -387,57 +475,255 @@ public class Enemy : MonoBehaviour
         if (cc.isGrounded && verticalVelocity < 0f) verticalVelocity = -2f;
         verticalVelocity += -20f * Time.deltaTime;
         Vector3 v = dir * moveSpeed + sep * 3f + Vector3.up * verticalVelocity + knock;
-        knock = Vector3.MoveTowards(knock, Vector3.zero, 22f * Time.deltaTime);
+        knock = Vector3.Lerp(knock, Vector3.zero, 1f - Mathf.Exp(-5f * Time.deltaTime)); // плавно гаснет — тело «тяжёлое»
         cc.Move(v * Time.deltaTime);
+    }
+
+    // Отброшенная тварь врезалась в стену — расплющило
+    void OnControllerColliderHit(ControllerColliderHit hit)
+    {
+        if (!Simulated || climbing || knock.magnitude < 5f || Time.time - lastImpact < 0.3f) return;
+        if (Mathf.Abs(hit.normal.y) > 0.6f) return;                       // это пол
+        if (Vector3.Dot(hit.normal, knock.normalized) > -0.3f) return;    // скользнула вдоль
+        if (hit.collider.GetComponentInParent<Enemy>() != null || hit.collider.GetComponentInParent<PlayerMovement>() != null ||
+            hit.collider.GetComponentInParent<NetworkPlayer>() != null) return;
+        WallSlam(hit.collider, hit.point, knock.magnitude);
+    }
+
+    void WallSlam(Collider c, Vector3 at, float speedHit)
+    {
+        lastImpact = Time.time;
+        BuildPiece bp = c.GetComponentInParent<BuildPiece>();
+        bool spikes = bp != null && bp.pieceId == "Barricade";
+        if (spikes) { StickOnSpikes(at); EnemyManager.React(this, -1, Vector3.zero, 0f, lastAttacker, Callout.Spikes); return; }
+        Health -= speedHit * 4f;
+        if (bp != null) BuildingManager.Damage(bp, spikes ? 6f : speedHit * 2f);
+        knock = Vector3.zero;
+        Interrupt(State.Stagger, 1.0f);
+        EnemyManager.Impact(at, 0.9f, id, 2);
+        EnemyManager.React(this, -1, Vector3.zero, 0f, lastAttacker, spikes ? Callout.Spikes : Callout.Wall);
     }
 
     void Face(Vector3 dir)
     {
         dir.y = 0f;
-        if (dir.sqrMagnitude > 0.01f && knock.sqrMagnitude < 4f)
+        if (dir.sqrMagnitude > 0.01f && knock.sqrMagnitude < 4f && Mathf.Abs(twist) < 60f)
             transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(dir), 8f * Time.deltaTime);
     }
 
-    // ---------- Удары по твари (на хосте) ----------
-    public void ApplyHit(float damage, Vector3 from, HitType type)
+    // =====================================================================
+    // Удары по твари (на хосте)
+    // =====================================================================
+    static float PartMultiplier(BodyPartType p)
     {
-        Health -= damage;
-        flash = 1f;
-        Vector3 away = transform.position - from; away.y = 0f;
-        away = away.sqrMagnitude > 0.01f ? away.normalized : -transform.forward;
-        bool brute = kind == EnemyKind.Brute;
-        if (CurrentState == State.Thrown || CurrentState == State.Grabbed || climbing) return;
-
-        switch (type)
+        switch (p)
         {
-            case HitType.Light:
+            case BodyPartType.Head: return 1.8f;
+            case BodyPartType.ArmL: case BodyPartType.ArmR: return 0.7f;
+            case BodyPartType.LegL: case BodyPartType.LegR: return 0.75f;
+            default: return 1f;
+        }
+    }
+
+    public void ApplyHit(HitInfo h, ulong attacker)
+    {
+        if (Health <= 0f || dead) return;
+        bool brute = kind == EnemyKind.Brute;
+        lastAttacker = attacker;
+        Vector3 dir = h.dir; dir.y = 0f;
+        dir = dir.sqrMagnitude > 0.01f ? dir.normalized : -transform.forward;
+        lastHitDir = h.dir.sqrMagnitude > 0.01f ? h.dir.normalized : dir;
+        BodyPartType part = h.part;
+        if (Lost(part)) part = BodyPartType.Torso;
+        int callout = Callout.None;
+
+        float dmg = h.damage * PartMultiplier(part);
+        if (CurrentState == State.Pinned) dmg *= 1.5f;
+        if (CurrentState == State.Stagger || CurrentState == State.Kneel) dmg *= 1.25f;
+
+        // КАЗНЬ: тварь на колене, удар сверху (или тяжёлый) по голове
+        if (CurrentState == State.Kneel && part == BodyPartType.Head && (h.type == HitType.Chop || h.heavy))
+        {
+            dmg = Health + 1f;
+            partHp[(int)BodyPartType.Head] = 0f;
+            callout = Callout.Execution;
+        }
+
+        bool wasOpen = CurrentState == State.Stagger;
+        Health -= dmg;
+        flash = 1f;
+        if (part != BodyPartType.Torso) partHp[(int)part] -= dmg;
+
+        // Мешок с ядом — взрыв
+        if (part == BodyPartType.Sack && !Lost(BodyPartType.Sack))
+        {
+            Sever(BodyPartType.Sack, lastHitDir);
+            Explode();
+            Health = 0f;
+            callout = Callout.Sack;
+        }
+        // Отрубили часть тела
+        else if (part != BodyPartType.Torso && partHp[(int)part] <= 0f && !Lost(part))
+        {
+            Sever(part, lastHitDir);
+            if (part == BodyPartType.Head) { Health = 0f; if (callout == Callout.None) callout = Callout.Head; }
+            else if (callout == Callout.None) callout = BodyPart.IsArm(part) ? Callout.Arm : Callout.Leg;
+            if (BodyPart.IsLeg(part) && Health > 0f && !climbing && !OnBlade && CurrentState != State.Thrown) Interrupt(State.Kneel, 1.2f);
+        }
+
+        float strength = h.heavy ? 1.6f : h.type == HitType.Kick ? 1.3f : 1f;
+
+        if (Health <= 0f || climbing || CurrentState == State.Grabbed)
+        {
+            if (Health <= 0f && OnBlade) { holder = null; HeldBy = -1; }
+            Finish(part, strength, callout);
+            return;
+        }
+
+        // Летящую — ещё дальше
+        if (CurrentState == State.Thrown)
+        {
+            if ((h.type == HitType.Kick || h.heavy) && rb != null)
+            {
+                rb.linearVelocity = dir * 14f * Mathf.Lerp(1f, knockScale, 0.5f) + Vector3.up * 3f;
+                thrownAt = Time.time;
+                callout = Callout.Air;
+            }
+            Finish(part, strength, callout);
+            return;
+        }
+
+        // Насажена на клинок / пригвождена
+        if (OnBlade)
+        {
+            bool pinned = CurrentState == State.Pinned;
+            if (h.type == HitType.RipOut)
+            {
+                ReleaseBlade(State.Flinch, 0.7f);
+                Knock(dir * 2f);
+                callout = Callout.RipOut;
+            }
+            else if (h.type == HitType.Kick)
+            {
+                ReleaseBlade(State.Recover, 0.3f);
+                if (pinned) { Health -= 25f; squash = 1f; Interrupt(State.Stagger, 1.2f); EnemyManager.Impact(transform.position + Vector3.up, 0.8f, id, 2); callout = Callout.Crushed; }
+                else BeginThrow(dir * 12f + Vector3.up * 3f, 3f);
+            }
+            Finish(part, strength, callout);
+            return;
+        }
+
+        // Клинок вошёл в туловище и застрял — тварь насажена на клинок
+        if (h.embed && part == BodyPartType.Torso && !brute && CurrentState != State.Thrown)
+        {
+            Transform t = EnemyManager.Instance != null ? EnemyManager.Instance.PlayerTransform(attacker) : null;
+            if (t != null)
+            {
+                Impale(t, attacker);
+                callout = Callout.Impaled;
+                if (WallBehind(dir, 0.45f * bodyScale + 0.6f, out RaycastHit wh)) { Pin(wh, dir); callout = Callout.Pinned; }
+                Finish(part, strength, callout);
+                return;
+            }
+        }
+
+        // Тяжёлый удар по «открытой» (шатающейся) — добивание: подбросить и об землю
+        if (wasOpen && h.heavy && h.type != HitType.Thrust)
+        {
+            Health -= 25f;
+            BeginThrow(Vector3.up * 9f + dir * 3f, 9f);
+            Finish(part, strength, Callout.Finisher);
+            return;
+        }
+
+        switch (h.type)
+        {
+            case HitType.Slash:
+            case HitType.Cross:
             case HitType.Tool:
-                Knock(away * 3f);
-                if (!brute) Interrupt(State.Flinch, 0.3f);
+            {
+                // Боковой удар разворачивает тело в сторону клинка
+                float side = Vector3.Dot(dir, transform.right);
+                twist += -side * (brute ? 160f : 480f) * (h.heavy ? 1.4f : 1f);
+                Knock(dir * (h.heavy ? 8f : 3.5f));
+                if (h.type == HitType.Cross && !brute) { BeginThrow(dir * 9f + Vector3.up * 3f, 6f); callout = Callout.Cross; break; }
+                if (h.heavy && !brute) { BeginThrow(dir * 8f + Vector3.up * 3f, 4f); break; }
+                if (h.heavy && brute) { Interrupt(State.Stagger, 0.8f); break; }
+                LimbEffect(part, h, brute, ref callout);
                 break;
-            case HitType.ComboEnd:
-                Knock(away * 7f + Vector3.up);
-                Interrupt(State.Flinch, brute ? 0.2f : 0.6f);
+            }
+            case HitType.Chop:
+                if (part == BodyPartType.Head) Interrupt(State.Stagger, brute ? (h.heavy ? 1.0f : 0.5f) : (h.heavy ? 1.4f : 0.8f)); // оглушил
+                else if (h.heavy && !BodyPart.IsLeg(part)) Interrupt(State.Stagger, brute ? 0.7f : 1.2f);
+                else LimbEffect(part, h, brute, ref callout);
+                Knock(dir * 1.5f);
                 break;
-            case HitType.Heavy:
-                Knock(away * 6f);
-                Interrupt(State.Stagger, brute ? 0.7f : 1.2f);
+            case HitType.Uppercut:
+                if (!brute && (part == BodyPartType.Torso || part == BodyPartType.Head))
+                {
+                    BeginThrow(Vector3.up * (h.heavy ? 10f : 7f) + dir * 1.5f, 5f);
+                    callout = Callout.Launch;
+                }
+                else LimbEffect(part, h, brute, ref callout);
+                break;
+            case HitType.Thrust:
+                if (part == BodyPartType.Head) Interrupt(State.Stagger, brute ? 0.5f : 1.0f);
+                else { Knock(dir * 2f); LimbEffect(part, h, brute, ref callout); }
                 break;
             case HitType.Kick:
-                if (brute) { Knock(away * 4f); Interrupt(State.Stagger, 0.5f); }
-                else BeginThrow(away * 9f + Vector3.up * 3.5f, 2f);
+                if (brute)
+                {
+                    Knock(dir * 4f);
+                    Interrupt(State.Stagger, CurrentState == State.Kneel ? 1.0f : 0.5f);
+                }
+                else BeginThrow(dir * 9f + Vector3.up * 3.5f, 2f);
                 break;
-            case HitType.Finisher:
-                BeginThrow(Vector3.up * 9f + away * 3f, 9f); // переворот в воздухе и об землю
+            case HitType.RipOut:
+                Knock(dir * 2f);
+                Interrupt(State.Flinch, 0.5f);
                 break;
         }
+        Finish(part, strength, callout);
+    }
+
+    void Finish(BodyPartType part, float strength, int callout)
+    {
+        EnemyManager.React(this, (int)part, lastHitDir, strength, lastAttacker, callout);
+    }
+
+    // Что делает удар по руке / ноге / телу
+    void LimbEffect(BodyPartType part, HitInfo h, bool brute, ref int callout)
+    {
+        if (BodyPart.IsLeg(part))
+        {
+            limpUntil = Time.time + 4f;
+            bool weak = partHp[(int)part] < partMax[(int)part] * 0.5f;
+            if ((weak || h.heavy) && Time.time >= kneelCooldown && CurrentState != State.Kneel)
+            {
+                Interrupt(State.Kneel, brute ? 1.8f : 1.5f);
+                kneelCooldown = Time.time + 4.5f;
+                if (callout == Callout.None) callout = Callout.Kneel;
+            }
+            else if (!brute) Interrupt(State.Flinch, 0.35f);
+        }
+        else if (BodyPart.IsArm(part))
+        {
+            if (CurrentState == State.WindUp) // удар по руке во время замаха сбивает удар (даже у громилы)
+            {
+                Interrupt(State.Flinch, 0.6f);
+                if (callout == Callout.None) callout = Callout.Disarm;
+            }
+            else if (!brute) Interrupt(State.Flinch, 0.3f);
+        }
+        else if (!brute) Interrupt(State.Flinch, part == BodyPartType.Head ? 0.5f : 0.3f);
     }
 
     void Interrupt(State s, float duration)
     {
+        if (OnBlade || CurrentState == State.Thrown || CurrentState == State.Grabbed) return;
         // Удар сбивает замах
         if (CurrentState == State.WindUp) { strikePiece = null; nextAttack = Time.time + 0.5f; }
-        if (CurrentState == State.Stagger && s == State.Flinch) return; // шатается — пусть шатается
+        if ((CurrentState == State.Stagger || CurrentState == State.Kneel) && s == State.Flinch) return; // шатается — пусть шатается
         SetState(s, duration);
         windTint = 0f;
     }
@@ -445,10 +731,161 @@ public class Enemy : MonoBehaviour
     // Парировали её удар — «открыта»
     public void Parried()
     {
-        if (CurrentState == State.Thrown || CurrentState == State.Grabbed) return;
+        if (CurrentState == State.Thrown || CurrentState == State.Grabbed || OnBlade) return;
         Knock(-transform.forward * 3f);
         SetState(State.Stagger, kind == EnemyKind.Brute ? 1.2f : 1.7f);
         flash = 1f;
+    }
+
+    // Отрубить часть тела (на хосте; у остальных — когда придёт LostMask)
+    void Sever(BodyPartType p, Vector3 dir)
+    {
+        LostMask |= 1 << (int)p;
+        DetachPart(p, dir);
+    }
+
+    void DetachPart(BodyPartType p, Vector3 dir)
+    {
+        BodyPart bp = parts != null ? parts[(int)p] : null;
+        if (bp == null || bp.lost) return;
+        bp.lost = true;
+        bp.enabled = false;
+        bp.owner = null;
+        bp.transform.SetParent(null, true);
+        Rigidbody body = MakePhysical(bp.gameObject, 6f * bodyScale);
+        body.linearVelocity = dir.normalized * 4f + Vector3.up * 3.5f;
+        body.angularVelocity = Random.insideUnitSphere * 10f;
+        Destroy(bp.gameObject, 7f);
+        CombatFx.Ichor(bp.transform.position, dir, p == BodyPartType.Sack ? 4 : 16);
+    }
+
+    static Rigidbody MakePhysical(GameObject go, float mass)
+    {
+        foreach (Transform t in go.GetComponentsInChildren<Transform>()) t.gameObject.layer = 2; // прицел сквозь куски
+        foreach (Collider c in go.GetComponentsInChildren<Collider>()) c.isTrigger = false;
+        Rigidbody r = go.AddComponent<Rigidbody>();
+        r.mass = mass;
+        r.interpolation = RigidbodyInterpolation.Interpolate;
+        return r;
+    }
+
+    // Мешок плевальщика лопнул: яд обжигает всех вокруг (и тебя, если стоишь рядом!)
+    void Explode()
+    {
+        Vector3 at = transform.position + Vector3.up * 1.2f * bodyScale;
+        EnemyManager.Impact(at, 1f, id, 1);
+        foreach (Enemy o in All.ToArray())
+        {
+            if (o == this || o.climbing || o.dead) continue;
+            Vector3 p = o.transform.position - at; p.y = 0f;
+            if (p.magnitude > 4.5f) continue;
+            o.Health -= 50f;
+            o.flash = 1f;
+            o.lastAttacker = lastAttacker;
+            if (o.kind != EnemyKind.Brute && o.CurrentState != State.Grabbed && !o.OnBlade) o.BeginThrow(p.normalized * 7f + Vector3.up * 4f, 3f);
+            else o.Knock(p.normalized * 4f);
+        }
+        if (EnemyManager.Instance != null) EnemyManager.Instance.SplashAt(at, 2.2f, 12f);
+    }
+
+    // ---------- На клинке (на хосте) ----------
+    void Impale(Transform by, ulong ownerId)
+    {
+        holder = by;
+        HeldBy = (int)ownerId;
+        if (cc != null) cc.enabled = false;
+        impaledAt = Time.time;
+        HasToken = false;
+        windTint = 0f;
+        strikePiece = null;
+        SetState(State.Impaled, 6f); // держится, пока игрок не выдернет клинок (или 6 сек)
+    }
+
+    bool WallBehind(Vector3 dir, float dist, out RaycastHit hit)
+    {
+        Vector3 c = transform.position + Vector3.up * 0.9f * bodyScale;
+        foreach (RaycastHit h in Physics.RaycastAll(c, dir, dist, ~(1 << 2), QueryTriggerInteraction.Ignore))
+        {
+            if (Mathf.Abs(h.normal.y) > 0.6f) continue;
+            if (h.collider.GetComponentInParent<Enemy>() != null || h.collider.GetComponentInParent<PlayerMovement>() != null ||
+                h.collider.GetComponentInParent<NetworkPlayer>() != null) continue;
+            hit = h;
+            return true;
+        }
+        hit = default;
+        return false;
+    }
+
+    // Тварь на клинке перед игроком. Толкаешь её в стену — пригвождаешь
+    void HoldOnBlade()
+    {
+        if (holder == null) { ReleaseBlade(State.Recover, 0.4f); return; }
+        Vector3 fwd = holder.forward; fwd.y = 0f; fwd.Normalize();
+        Vector3 want = holder.position + fwd * (1.25f + 0.45f * bodyScale);
+        want.y = Mathf.Lerp(transform.position.y, holder.position.y - 0.9f, 0.5f);
+        Vector3 step = want - transform.position;
+        float ahead = Mathf.Max(0f, Vector3.Dot(step, fwd));
+        if (Time.time - impaledAt > 0.1f && WallBehind(fwd, 0.45f * bodyScale + 0.15f + ahead, out RaycastHit wh))
+        {
+            Pin(wh, fwd);
+            EnemyManager.React(this, -1, Vector3.zero, 0f, (ulong)HeldBy, Callout.Pinned);
+            return;
+        }
+        transform.position = Vector3.MoveTowards(transform.position, want, 14f * Time.deltaTime);
+        Face(holder.position - transform.position);
+        Health -= 4f * Time.deltaTime; // больно
+        if (Time.time >= stateUntil) ReleaseBlade(State.Recover, 0.5f); // соскользнула
+    }
+
+    void Pin(RaycastHit wall, Vector3 dir)
+    {
+        Vector3 p = wall.point - dir * (0.45f * bodyScale + 0.05f);
+        p.y = transform.position.y;
+        transform.position = p;
+        SetState(State.Pinned, 3f);
+        Health -= 15f;
+        squash = 1f;
+        EnemyManager.Impact(wall.point, 0.9f, id, 2);
+    }
+
+    // Насадилась на колья баррикады: висит, дёргается, слабеет
+    void StickOnSpikes(Vector3 at)
+    {
+        if (rb != null) { rb.linearVelocity = Vector3.zero; rb.isKinematic = true; } // убираем в StayPinned (сейчас идёт расчёт столкновения)
+        if (cc != null) cc.enabled = false;
+        spiked = true;
+        holder = null;
+        HeldBy = -1;
+        knock = Vector3.zero;
+        Health -= 35f;
+        SetState(State.Pinned, 3.5f);
+        squash = 0.6f;
+        EnemyManager.Impact(at, 1f, id, 2);
+    }
+
+    void StayPinned()
+    {
+        if (spiked)
+        {
+            if (rb != null) { Destroy(rb); rb = null; }
+            if (throwCol != null) { Destroy(throwCol); throwCol = null; }
+            transform.rotation = Quaternion.Euler(0f, transform.eulerAngles.y, 0f);
+            Health -= 22f * Time.deltaTime;
+            if (Time.time >= stateUntil) { spiked = false; ReleaseBlade(State.Down, 1.2f); }
+            return;
+        }
+        Health -= 3f * Time.deltaTime;
+        if (holder == null || Vector3.Distance(holder.position, transform.position) > 4.5f || Time.time >= stateUntil)
+            ReleaseBlade(State.Recover, 0.5f);
+    }
+
+    void ReleaseBlade(State next, float duration)
+    {
+        holder = null;
+        HeldBy = -1;
+        if (cc != null) cc.enabled = true;
+        verticalVelocity = 0f;
+        SetState(next, duration);
     }
 
     // ---------- Захват и бросок (на хосте) ----------
@@ -496,19 +933,25 @@ public class Enemy : MonoBehaviour
     {
         if (!Simulated) return;
         if (cc != null) cc.enabled = false;
+        float h = BodyHeight * bodyScale;
         if (throwCol == null)
         {
             throwCol = gameObject.AddComponent<CapsuleCollider>();
-            throwCol.radius = 0.45f * bodyScale; throwCol.height = 1.7f * bodyScale; throwCol.center = new Vector3(0f, 0.85f * bodyScale, 0f);
+            throwCol.radius = 0.45f * bodyScale; throwCol.height = h; throwCol.center = new Vector3(0f, h / 2f, 0f);
         }
         if (rb == null) rb = gameObject.AddComponent<Rigidbody>();
         rb.mass = 60f * bodyScale * bodyScale * bodyScale;
         rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
+        rb.isKinematic = false;
+        rb.linearDamping = 0.15f;
+        rb.angularDamping = 1.2f;
         rb.linearVelocity = velocity * Mathf.Lerp(1f, knockScale, 0.5f);
-        rb.angularVelocity = transform.right * -spin + Random.insideUnitSphere * spin * 0.3f;
+        rb.angularVelocity = transform.right * -spin * 0.6f + Random.insideUnitSphere * spin * 0.15f;
         knock = Vector3.zero;
+        twist = 0f;
         thrownAt = Time.time;
+        windTint = 0f;
         SetState(State.Thrown, 4f);
     }
 
@@ -537,22 +980,34 @@ public class Enemy : MonoBehaviour
         if (impact < 3f) return;
         lastImpact = Time.time;
         Vector3 at = c.contactCount > 0 ? c.GetContact(0).point : transform.position;
+        Vector3 normal = c.contactCount > 0 ? c.GetContact(0).normal : Vector3.up;
+        bool wall = Mathf.Abs(normal.y) < 0.5f;
 
         BuildPiece bp = c.collider.GetComponentInParent<BuildPiece>();
         Enemy other = c.collider.GetComponentInParent<Enemy>();
         if (bp != null)
         {
             bool spikes = bp.pieceId == "Barricade";
-            Health -= spikes ? 90f : impact * 6f;                    // о колья — почти насмерть, о стену — больно
+            if (spikes)
+            {
+                StickOnSpikes(at);                                    // насадилась на колья
+                BuildingManager.Damage(bp, 6f);
+                EnemyManager.React(this, -1, Vector3.zero, 0f, lastAttacker, Callout.Spikes);
+                return;
+            }
+            Health -= impact * 6f;                                   // о стену — больно
             BuildingManager.Damage(bp, spikes ? 8f : impact * 3f);
-            EnemyManager.Impact(at, spikes ? 1f : Mathf.Clamp01(impact / 12f));
+            bool flat = spikes || (wall && impact > 8f);
+            EnemyManager.Impact(at, spikes ? 1f : Mathf.Clamp01(impact / 12f), flat ? id : -1, flat ? 2 : 0);
+            if (flat) EnemyManager.React(this, -1, Vector3.zero, 0f, lastAttacker, spikes ? Callout.Spikes : Callout.Wall);
         }
         else if (other != null && other != this)
         {
             Health -= impact * 3f;
             other.Health -= impact * 3f;
+            other.lastAttacker = lastAttacker;
             Vector3 push = other.transform.position - transform.position; push.y = 0f;
-            if (other.CurrentState != State.Thrown && other.CurrentState != State.Grabbed && !other.climbing)
+            if (other.CurrentState != State.Thrown && other.CurrentState != State.Grabbed && !other.climbing && !other.OnBlade)
             {
                 if (other.kind == EnemyKind.Brute) other.Interrupt(State.Flinch, 0.3f);
                 else other.BeginThrow(push.normalized * impact * 0.5f + Vector3.up * 2f, 2f); // сбили соседа как кеглю
@@ -561,8 +1016,10 @@ public class Enemy : MonoBehaviour
         }
         else if (impact > 6f)
         {
-            Health -= impact * 2.5f;                                 // шмякнулась о землю
-            EnemyManager.Impact(at, Mathf.Clamp01(impact / 15f));
+            Health -= impact * 2.5f;                                 // шмякнулась о землю или скалу
+            bool flat = wall && impact > 8f;
+            EnemyManager.Impact(at, Mathf.Clamp01(impact / 15f), flat ? id : -1, flat ? 2 : 0);
+            if (flat) EnemyManager.React(this, -1, Vector3.zero, 0f, lastAttacker, Callout.Wall);
         }
         flash = 1f;
     }
@@ -583,19 +1040,48 @@ public class Enemy : MonoBehaviour
     // =====================================================================
     // Копия у остальных игроков
     // =====================================================================
-    public void SetNetState(Vector3 pos, float yaw, float hpFrac, bool climb, int state, int heldBy)
+    public void SetNetState(Vector3 pos, float yaw, float hpFrac, bool climb, int state, int heldBy, int lostMask, int side)
     {
         if (Simulated) return;
+        if (state == (int)State.WindUp && CurrentState != State.WindUp) windStart = Time.time;
+        AttackSide = side;
         netPos = pos;
         netYaw = yaw;
         climbing = climb;
         State s = (State)state;
         if (s == State.Recover && CurrentState == State.WindUp) lunge = 1f;
+        if (s == State.Pinned && CurrentState != State.Pinned) squash = 1f;
         CurrentState = s;
         HeldBy = heldBy;
         if (hpFrac < HealthFraction) flash = 1f;
         HealthFraction = hpFrac;
+        int added = lostMask & ~LostMask;
+        LostMask = lostMask;
+        for (int i = 0; i < 7; i++) if ((added & (1 << i)) != 0) DetachPart((BodyPartType)i, lastHitDir);
     }
+
+    // Тело дёрнулось от удара — у всех игроков одинаково (вызывает EnemyManager или сам ударивший сразу)
+    public void LocalReact(int part, Vector3 dir, float strength)
+    {
+        if (dir.sqrMagnitude > 0.01f) lastHitDir = dir.normalized;
+        flash = 1f;
+        if (parts == null || strength <= 0f || dir.sqrMagnitude < 0.01f) return;
+        Vector3 hdir = new Vector3(dir.x, 0f, dir.z);
+        Vector3 axis = hdir.sqrMagnitude > 0.09f * dir.sqrMagnitude
+            ? Vector3.Cross(Vector3.up, hdir.normalized)
+            : transform.right * (dir.y < 0f ? 1f : -1f);              // сверху — кивок вперёд, снизу — запрокидывает
+        Vector3 local = transform.InverseTransformDirection(axis) * 650f * strength;
+        BodyPart torso = parts[(int)BodyPartType.Torso];
+        BodyPart p = part >= 0 && part < parts.Length ? parts[part] : null;
+        if (p == null || p.lost) p = torso;
+        if (p != null) p.reactVel += local;
+        if (torso != null && p != torso) torso.reactVel += local * 0.45f;
+        BodyPart head = parts[(int)BodyPartType.Head];
+        if (p == torso && head != null && !head.lost) head.reactVel += local * 0.6f; // голова мотается
+    }
+
+    // Расплющило (у копий — через EnemyManager.Impact)
+    public void Squash() { squash = 1f; }
 
     public void Lunge() { lunge = 1f; }
     public void Flash() { flash = 1f; }
@@ -605,12 +1091,22 @@ public class Enemy : MonoBehaviour
         if (!Simulated)
         {
             PlayerHealth me = PlayerHealth.Local;
-            if (HeldBy >= 0 && (ulong)HeldBy == Net.LocalId && me != null)
+            bool mine = HeldBy >= 0 && (ulong)HeldBy == Net.LocalId && me != null;
+            if (mine && CurrentState == State.Grabbed)
             {
                 // Я держу эту тварь — показываю её у себя в руках сразу, без задержки сети
                 Transform h = me.transform;
                 transform.position = h.position + h.forward * (1.0f + 0.4f * bodyScale) + Vector3.up * 0.3f;
                 transform.rotation = Quaternion.LookRotation(-h.forward);
+            }
+            else if (mine && CurrentState == State.Impaled)
+            {
+                // На моём клинке
+                Transform h = me.transform;
+                Vector3 f = h.forward; f.y = 0f; f.Normalize();
+                Vector3 want = h.position + f * (1.25f + 0.45f * bodyScale); want.y = netPos.y;
+                transform.position = Vector3.Lerp(transform.position, want, 20f * Time.deltaTime);
+                transform.rotation = Quaternion.LookRotation(-f);
             }
             else
             {
@@ -625,38 +1121,60 @@ public class Enemy : MonoBehaviour
     void UpdateVisual()
     {
         if (visual == null) return;
-        lunge = Mathf.MoveTowards(lunge, 0f, Time.deltaTime * 3f);
-        windTint = CurrentState == State.WindUp ? Mathf.Min(1f, windTint + Time.deltaTime * 3f) : Mathf.MoveTowards(windTint, 0f, Time.deltaTime * 4f);
+        float dt = Time.deltaTime;
+        lunge = Mathf.MoveTowards(lunge, 0f, dt * 3f);
+        windTint = CurrentState == State.WindUp ? Mathf.Min(1f, windTint + dt * 3f) : Mathf.MoveTowards(windTint, 0f, dt * 4f);
+        squash = Mathf.MoveTowards(squash, 0f, dt * 1.1f);
 
+        // Скорость ходьбы (по тому, как сдвинулись) — для шагов
+        Vector3 moved = transform.position - lastVisPos; moved.y = 0f;
+        lastVisPos = transform.position;
+        if (dt > 0.0001f) visSpeed = Mathf.Lerp(visSpeed, moved.magnitude / dt, 10f * dt);
+        walkPhase += Mathf.Min(visSpeed, 8f) * dt * 3.5f / bodyScale;
+
+        if (dt > 0.0001f) visVel = Vector3.Lerp(visVel, transform.InverseTransformDirection(moved / dt), 8f * dt);
+        int legsLost = LegsLost;
         Quaternion rot = Quaternion.identity;
         Vector3 pos = new Vector3(0f, 0f, Mathf.Sin(lunge * Mathf.PI) * 0.6f);
         float t = Time.time;
         if (climbing) rot = Quaternion.Euler(-70f, 0f, 0f);
         else switch (CurrentState)
         {
-            case State.WindUp: rot = Quaternion.Euler(-28f, 0f, 0f); pos.z -= 0.25f; break;
+            case State.WindUp: rot = Quaternion.Euler(-12f, 0f, 0f); pos.z -= 0.25f; break;
             case State.Recover: rot = Quaternion.Euler(18f * Mathf.Sin(lunge * Mathf.PI), 0f, 0f); break;
-            case State.Flinch: rot = Quaternion.Euler(-14f, Mathf.Sin(t * 40f) * 6f, 0f); break;
+            case State.Flinch: rot = Quaternion.Euler(-10f, Mathf.Sin(t * 40f) * 6f, 0f); break;
             case State.Stagger: rot = Quaternion.Euler(-10f, 0f, Mathf.Sin(t * 9f) * 18f); break;
             case State.Grabbed: rot = Quaternion.Euler(-35f, 0f, Mathf.Sin(t * 25f) * 12f); break;
+            case State.Impaled: rot = Quaternion.Euler(-22f, 0f, Mathf.Sin(t * 22f) * 8f); break;
+            case State.Pinned: rot = Quaternion.Euler(-8f, 0f, Mathf.Sin(t * 30f) * 4f); break;
+            case State.Kneel: rot = Quaternion.Euler(12f, 0f, 0f); pos.y = -0.38f * bodyScale; break;
             case State.Down: rot = Quaternion.Euler(-88f, 0f, 0f); pos.y = 0.25f * bodyScale; break;
+            default:
+                // наклон по движению: отбросило назад — откидывается, вбок — заваливается
+                rot = Quaternion.Euler(Mathf.Clamp(visVel.z * 2.5f, -28f, 8f), 0f, Mathf.Clamp(-visVel.x * 4f, -25f, 25f));
+                if (legsLost == 2) { rot = Quaternion.Euler(68f, 0f, 0f); pos.y = -0.25f * bodyScale; }        // ползёт
+                else if (legsLost == 1) { rot = Quaternion.Euler(8f, 0f, Mathf.Sin(walkPhase) * 12f); pos.y = -0.12f * bodyScale; } // хромает
+                break;
         }
         if (CurrentState == State.Thrown && !Simulated)
         {
-            visualSpin += Time.deltaTime * 720f; // у копии просто кувыркается
+            visualSpin += dt * 720f; // у копии просто кувыркается
             visual.localRotation = Quaternion.Euler(-visualSpin, 0f, 0f);
         }
         else if (CurrentState == State.Thrown) visual.localRotation = Quaternion.identity; // у хоста вертит физика
         else
         {
             visualSpin = 0f;
-            visual.localRotation = Quaternion.Slerp(visual.localRotation, rot, 14f * Time.deltaTime);
+            visual.localRotation = Quaternion.Slerp(visual.localRotation, rot, 14f * dt);
         }
-        visual.localPosition = Vector3.Lerp(visual.localPosition, pos, 20f * Time.deltaTime);
+        visual.localPosition = Vector3.Lerp(visual.localPosition, pos, 20f * dt);
+        visual.localScale = Vector3.one * bodyScale * 1f + Vector3.Scale(new Vector3(0.3f, 0.1f, -0.5f), Vector3.one * bodyScale * squash);
+
+        AnimateParts(t, dt, legsLost);
 
         // Цвет: белая вспышка при ударе, красное «наливание» во время замаха
         if (renderers == null || (flash <= 0f && windTint <= 0f)) return;
-        flash = Mathf.Max(0f, flash - Time.deltaTime * 4f);
+        flash = Mathf.Max(0f, flash - dt * 4f);
         for (int i = 0; i < renderers.Length; i++)
         {
             if (renderers[i] == null) continue;
@@ -668,23 +1186,135 @@ public class Enemy : MonoBehaviour
         }
     }
 
+    // Шаги, замах когтями, судороги — и «пружина» отдачи от ударов на каждом суставе
+    void AnimateParts(float t, float dt, int legsLost)
+    {
+        if (parts == null) return;
+        float amp = Mathf.Clamp01(visSpeed / 3f);
+        float s = Mathf.Sin(walkPhase);
+        for (int i = 0; i < parts.Length; i++)
+        {
+            BodyPart bp = parts[i];
+            if (bp == null || bp.lost || bp.transform.parent == null) continue;
+            bool arm = BodyPart.IsArm(bp.type), leg = BodyPart.IsLeg(bp.type);
+            float side = bp.type == BodyPartType.ArmL || bp.type == BodyPartType.LegL ? 1f : -1f;
+            Vector3 e = Vector3.zero;
+
+            if (leg) e.x = s * 35f * amp * side;
+            if (arm) e.x = -s * 20f * amp * side;
+
+            switch (CurrentState)
+            {
+                case State.WindUp:
+                {
+                    // заносит лапу: левую, правую или обе над головой — видно, откуда прилетит удар
+                    bool raise = AttackSide == 0 || (AttackSide < 0) == (bp.type == BodyPartType.ArmL);
+                    if (arm) e = raise ? new Vector3(-150f, 0f, AttackSide == 0 ? 0f : 35f * side) : new Vector3(-30f, 0f, 0f);
+                    if (bp.type == BodyPartType.Torso) e = new Vector3(-22f, AttackSide * -25f, 0f);
+                    break;
+                }
+                case State.Recover:
+                {
+                    // удар: лапа проносится сверху вниз и поперёк
+                    bool hit = AttackSide == 0 || (AttackSide < 0) == (bp.type == BodyPartType.ArmL);
+                    float k = lunge * lunge;
+                    if (arm && hit) e = new Vector3(Mathf.Lerp(35f, -150f, k), 0f, Mathf.Lerp(-30f * side, 35f * side, k) * (AttackSide == 0 ? 0f : 1f));
+                    if (bp.type == BodyPartType.Torso) e = new Vector3(Mathf.Lerp(15f, -22f, k), Mathf.Lerp(AttackSide * 25f, AttackSide * -25f, k), 0f);
+                    break;
+                }
+                case State.Grabbed:
+                case State.Impaled:
+                case State.Pinned:
+                    if (arm) e.x = Mathf.Sin(t * 18f + i) * 45f - 50f;
+                    if (leg) e.x = Mathf.Sin(t * 15f + i * 2f) * 30f;
+                    break;
+                case State.Kneel:
+                    if (bp.type == BodyPartType.LegL) e.x = -85f;
+                    if (bp.type == BodyPartType.LegR) e.x = 75f;
+                    if (arm) e.x = 25f;
+                    break;
+                case State.Stagger:
+                    if (arm) e = new Vector3(20f, 0f, Mathf.Sin(t * 9f) * 25f * side);
+                    if (bp.type == BodyPartType.Head) e.x = 25f;
+                    break;
+                case State.Down:
+                    if (arm) e.x = -60f;
+                    break;
+                default:
+                    if (legsLost == 2 && arm) e.x = -120f + Mathf.Sin(walkPhase * 1.5f + side) * 40f; // подтягивается на руках
+                    break;
+            }
+
+            // Пружина отдачи: удар отклоняет сустав, потом он возвращается с покачиванием
+            bp.reactVel += (-170f * bp.react - 13f * bp.reactVel) * dt;
+            bp.react += bp.reactVel * dt;
+            if (bp.react.sqrMagnitude > 75f * 75f) bp.react = bp.react.normalized * 75f;
+            Quaternion r = Quaternion.identity;
+            float ang = bp.react.magnitude;
+            if (ang > 0.05f)
+            {
+                Vector3 ax = bp.transform.parent.InverseTransformDirection(transform.TransformDirection(bp.react / ang));
+                r = Quaternion.AngleAxis(ang, ax);
+            }
+            Quaternion target = r * bp.baseRotation * Quaternion.Euler(e);
+            bp.transform.localRotation = Quaternion.Slerp(bp.transform.localRotation, target, Mathf.Min(1f, 25f * dt));
+        }
+    }
+
+    // Смерть: тело падает тряпичной куклой (суставы на шарнирах), через несколько секунд исчезает
     public void Die()
     {
-        Renderer r = renderers != null && renderers.Length > 0 ? renderers[0] : null;
-        Material mat = r != null ? r.sharedMaterial : null;
-        for (int i = 0; i < 9; i++)
+        if (dead) return;
+        dead = true;
+        Vector3 v = (rb != null ? rb.linearVelocity : Vector3.zero) + lastHitDir * 1.6f + Vector3.up * 0.6f;
+        GameObject corpse = new GameObject("Corpse");
+        Rigidbody torsoRb = null;
+        var limbs = new List<BodyPart>();
+        if (parts != null)
         {
-            GameObject d = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            d.layer = 2;
-            d.transform.position = transform.position + Vector3.up * 0.9f * bodyScale + Random.insideUnitSphere * 0.5f * bodyScale;
-            d.transform.localScale = Vector3.one * Random.Range(0.15f, 0.35f) * bodyScale;
-            d.transform.rotation = Random.rotation;
-            if (mat != null) d.GetComponent<Renderer>().sharedMaterial = mat;
-            Rigidbody body = d.AddComponent<Rigidbody>();
-            body.mass = 0.5f;
-            body.AddForce(Random.insideUnitSphere * 4f + Vector3.up * 3f, ForceMode.VelocityChange);
-            Destroy(d, Random.Range(4f, 7f));
+            foreach (BodyPart bp in parts)
+            {
+                if (bp == null || bp.lost) continue;
+                bp.lost = true;
+                bp.enabled = false;
+                bp.owner = null;
+                bp.transform.SetParent(corpse.transform, true);
+                Rigidbody r = MakePhysical(bp.gameObject, (bp.type == BodyPartType.Torso ? 30f : 6f) * bodyScale);
+                r.linearVelocity = v;
+                r.linearDamping = 0.2f;
+                r.angularDamping = 0.8f;
+                if (bp.type == BodyPartType.Torso) { torsoRb = r; r.angularVelocity = Random.insideUnitSphere * 3f; }
+                else limbs.Add(bp);
+            }
+            foreach (BodyPart bp in limbs)
+            {
+                if (torsoRb == null) break;
+                CharacterJoint j = bp.gameObject.AddComponent<CharacterJoint>();
+                j.connectedBody = torsoRb;
+                j.anchor = Vector3.zero;
+                j.axis = Vector3.right;
+                j.swingAxis = Vector3.forward;
+                j.lowTwistLimit = new SoftJointLimit { limit = -35f };
+                j.highTwistLimit = new SoftJointLimit { limit = 35f };
+                j.swing1Limit = new SoftJointLimit { limit = 55f };
+                j.swing2Limit = new SoftJointLimit { limit = 40f };
+            }
         }
+        if (torsoRb == null)
+        {
+            // на всякий случай — старые кусочки
+            for (int i = 0; i < 6; i++)
+            {
+                GameObject d = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                d.layer = 2;
+                d.transform.SetParent(corpse.transform, false);
+                d.transform.position = transform.position + Vector3.up * 0.9f * bodyScale + Random.insideUnitSphere * 0.5f * bodyScale;
+                d.transform.localScale = Vector3.one * Random.Range(0.15f, 0.35f) * bodyScale;
+                d.AddComponent<Rigidbody>().AddForce(Random.insideUnitSphere * 4f + Vector3.up * 3f, ForceMode.VelocityChange);
+            }
+        }
+        CombatFx.Ichor(transform.position + Vector3.up * bodyScale, lastHitDir, 10);
+        Destroy(corpse, 8f);
         Destroy(gameObject);
     }
 }

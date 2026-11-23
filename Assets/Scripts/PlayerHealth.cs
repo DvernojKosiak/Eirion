@@ -19,16 +19,20 @@ public class PlayerHealth : MonoBehaviour
     public Vector3 respawnPoint = new Vector3(8f, 5.2f, -20f);
 
     [Header("Выносливость")]
-    public float maxStamina = 100f;
-    public float staminaRegen = 24f;    // в секунду
-    public float staminaDelay = 0.9f;   // пауза после траты
+    public float maxStamina = 160f;
+    public float staminaRegen = 38f;    // в секунду
+    public float staminaDelay = 0.6f;   // пауза после траты
     public float blockReduction = 0.8f; // сколько урона гасит блок
-    public float blockStaminaPerDamage = 1.4f;
+    public float blockStaminaPerDamage = 1.1f;
 
     public float Health { get; private set; }
     public float Stamina { get; private set; }
     public bool IsDead { get; private set; }
     public bool IsBlocking { get; private set; }
+    public float BlockJolt => blockFlash;            // для анимации меча: удар пришёлся в блок
+    public bool InParryWindow => IsBlocking && Time.time - blockStart < parryWindow;
+    public float parryWindow = 0.3f;                 // поставил блок за столько секунд до удара — парирование
+    public float blockAngle = 55f;                   // блок держит только удары спереди (смотри на врага!)
 
     public static PlayerHealth Local { get; private set; } // здоровье своего игрока
 
@@ -76,7 +80,24 @@ public class PlayerHealth : MonoBehaviour
     {
         if (IsDead) return;
         if (movement != null && movement.IsDodging) { Notice("Уклон!", new Color(0.6f, 0.9f, 1f)); return; }
-        if (IsBlocking && attackerId >= 0 && Time.time - blockStart < 0.25f)
+        // Блок держит только удар спереди: повернись к врагу прицелом
+        bool facing = true;
+        Enemy attacker = attackerId >= 0 && EnemyManager.Instance != null ? EnemyManager.Instance.Find(attackerId) : null;
+        if (attacker != null)
+        {
+            Camera cam = Camera.main;
+            Vector3 f = cam != null ? cam.transform.forward : transform.forward; f.y = 0f;
+            Vector3 to = attacker.transform.position - transform.position; to.y = 0f;
+            facing = to.sqrMagnitude < 0.01f || Vector3.Angle(f, to) <= blockAngle;
+        }
+        if (IsBlocking && !facing)
+        {
+            Notice("Удар сбоку — блок не держит!", new Color(1f, 0.45f, 0.35f));
+            TakeDamage(amount, null, false);
+            PlayerCamera.Shake(Mathf.Clamp(amount / 30f, 0.2f, 0.6f));
+            return;
+        }
+        if (IsBlocking && attackerId >= 0 && Time.time - blockStart < parryWindow)
         {
             // Парирование!
             Notice("ПАРИРОВАНО!", new Color(1f, 0.85f, 0.3f));
@@ -87,8 +108,17 @@ public class PlayerHealth : MonoBehaviour
             blockFlash = 1f;
             return;
         }
+        bool blocked = IsBlocking;
         TakeDamage(amount, null, true);
-        PlayerCamera.Shake(IsBlocking ? 0.15f : Mathf.Clamp(amount / 30f, 0.15f, 0.6f));
+        if (blocked)
+        {
+            // звон: искры о клинок, меч дёргается
+            Camera cam = Camera.main;
+            if (cam != null) CombatFx.Sparks(cam.transform.position + cam.transform.forward * 0.7f - cam.transform.up * 0.05f, Color.white, 10);
+            CombatFx.Hitstop(0.05f);
+            Notice("Блок", new Color(0.75f, 0.85f, 1f));
+        }
+        PlayerCamera.Shake(blocked ? 0.2f : Mathf.Clamp(amount / 30f, 0.15f, 0.6f));
     }
 
     void Notice(string text, Color c) { notice = text; noticeColor = c; noticeUntil = Time.time + 1f; }
@@ -183,6 +213,39 @@ public class PlayerHealth : MonoBehaviour
             Health = Mathf.Min(maxHealth, Health + regenPerSecond * Time.deltaTime);
     }
 
+    // Красные метки вокруг прицела: какая тварь сейчас замахивается на тебя и откуда прилетит удар.
+    // Метка там, где тварь (сверху — впереди, сбоку — сбоку, снизу — за спиной). Полная и яркая — удар вот-вот.
+    void DrawThreats(float cx, float cy)
+    {
+        if (IsDead) return;
+        Camera cam = Camera.main;
+        if (cam == null) return;
+        Vector3 f = cam.transform.forward; f.y = 0f;
+        if (f.sqrMagnitude < 0.001f) return;
+        f.Normalize();
+        foreach (Enemy e in Enemy.All)
+        {
+            if (e == null || e.CurrentState != Enemy.State.WindUp) continue;
+            Vector3 to = transform.position - e.transform.position; to.y = 0f;
+            float dist = to.magnitude;
+            if (dist > e.attackRange + 2.5f) continue;
+            if (dist > 0.1f && Vector3.Angle(e.transform.forward, to) > 60f) continue; // замахивается не на меня
+            float ang = Vector3.SignedAngle(f, -to, Vector3.up) * Mathf.Deg2Rad;
+            Vector2 dir = new Vector2(Mathf.Sin(ang), -Mathf.Cos(ang));
+            float p = e.WindProgress;
+            Color c = new Color(1f, 0.15f + 0.3f * (1f - p), 0.1f, 0.35f + 0.6f * p);
+            for (int i = 0; i < 4; i++)
+            {
+                float r = 70f + i * 9f, size = 7f + i * 2f + p * 4f;
+                Hud.Fill(new Rect(cx + dir.x * r - size / 2f, cy + dir.y * r - size / 2f, size, size), c, size / 2f);
+            }
+            string from = e.AttackSide == 0 ? "сверху" : e.AttackSide < 0 ? "справа" : "слева";
+            Color old = GUI.color; GUI.color = c;
+            GUI.Label(new Rect(cx + dir.x * 120f - 60f, cy + dir.y * 120f - 10f, 120f, 20f), from, Hud.CenterTiny);
+            GUI.color = old;
+        }
+    }
+
     void OnGUI()
     {
         Hud.Bar(new Rect(12, 72, 220, 14), Health / maxHealth, new Color(0.85f, 0.2f, 0.2f), null);
@@ -191,13 +254,25 @@ public class PlayerHealth : MonoBehaviour
                 Time.time < blockBrokenUntil ? new Color(0.6f, 0.3f, 0.1f) : new Color(0.95f, 0.8f, 0.25f), null);
         GUI.Label(new Rect(16, 116, 300, 22), Time.time < blockBrokenUntil ? "Блок пробит!" : "Выносливость", Hud.Tiny);
 
+        float cx = Screen.width / 2f, cy = Screen.height / 2f;
         if (IsBlocking)
         {
-            Color c = Color.Lerp(new Color(0.7f, 0.8f, 1f, 0.8f), Color.white, blockFlash);
+            // Скобки вокруг прицела: золотые — окно парирования, голубые — обычный блок
+            Color c = InParryWindow ? new Color(1f, 0.8f, 0.3f, 0.95f) : new Color(0.65f, 0.8f, 1f, 0.85f);
+            c = Color.Lerp(c, Color.white, blockFlash);
+            float gap = 34f + blockFlash * 8f;
+            Hud.Fill(new Rect(cx - gap - 4, cy - 26, 4, 52), c, 2);
+            Hud.Fill(new Rect(cx + gap, cy - 26, 4, 52), c, 2);
+            Hud.Fill(new Rect(cx - gap - 4, cy - 26, 12, 4), c, 2);
+            Hud.Fill(new Rect(cx - gap - 4, cy + 22, 12, 4), c, 2);
+            Hud.Fill(new Rect(cx + gap - 8, cy - 26, 12, 4), c, 2);
+            Hud.Fill(new Rect(cx + gap - 8, cy + 22, 12, 4), c, 2);
             Color old = GUI.color; GUI.color = c;
-            GUI.Label(new Rect(0, Screen.height / 2f + 22, Screen.width, 26), "[ БЛОК ]", Hud.Center);
+            GUI.Label(new Rect(0, cy + 30, Screen.width, 22), InParryWindow ? "парирование!" : "блок — держи врага в прицеле", Hud.CenterTiny);
             GUI.color = old;
         }
+
+        DrawThreats(cx, cy);
 
         if (Time.time < noticeUntil)
         {

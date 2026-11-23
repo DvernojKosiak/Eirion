@@ -36,9 +36,14 @@ public class PlayerCamera : MonoBehaviour
     // Когда открыто меню (например, построек), клик мышью не должен захватывать курсор
     public static bool BlockCursorLock;
 
+    // Тряска камеры от сильных ударов: PlayerCamera.Shake(0.5f)
+    static float shake;
+    public static void Shake(float amount) { shake = Mathf.Max(shake, amount); }
+
     float pitch;            // наклон головы вверх/вниз
     bool thirdPerson;
     float currentDistance;  // текущее расстояние (с учётом стен)
+    PlayerMovement movement;
 
     void Start()
     {
@@ -91,8 +96,11 @@ public class PlayerCamera : MonoBehaviour
         if (!thirdPerson)
         {
             // Первое лицо: камера прямо в голове
-            cameraObject.localPosition = Vector3.zero;
-            cameraObject.localRotation = Quaternion.identity;
+            // при перекате голова «ныряет» вниз
+            if (movement == null && playerBody != null) movement = playerBody.GetComponent<PlayerMovement>();
+            float roll = movement != null ? movement.DodgeRoll : 0f;
+            cameraObject.localPosition = Vector3.down * Mathf.Sin(roll * Mathf.PI) * 0.6f;
+            cameraObject.localRotation = ShakeRotation();
             return;
         }
 
@@ -117,7 +125,18 @@ public class PlayerCamera : MonoBehaviour
         else currentDistance = Mathf.Lerp(currentDistance, safeDist, 8f * Time.deltaTime);
 
         cameraObject.position = transform.position + dir * currentDistance;
-        cameraObject.localRotation = Quaternion.identity;
+        cameraObject.localRotation = ShakeRotation();
+    }
+
+    Quaternion ShakeRotation()
+    {
+        if (shake <= 0.001f) return Quaternion.identity;
+        float t = Time.unscaledTime * 35f;
+        Quaternion q = Quaternion.Euler((Mathf.PerlinNoise(t, 0f) - 0.5f) * 6f * shake,
+                                        (Mathf.PerlinNoise(0f, t) - 0.5f) * 6f * shake,
+                                        (Mathf.PerlinNoise(t, t) - 0.5f) * 4f * shake);
+        shake = Mathf.MoveTowards(shake, 0f, Time.unscaledDeltaTime * 3f);
+        return q;
     }
 
     void LockCursor(bool locked)

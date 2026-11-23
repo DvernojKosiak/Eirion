@@ -6,6 +6,9 @@ using UnityEngine.InputSystem;
 //   Выносливость (жёлтая): тратится на бег, прыжки, удары и блок. Восстанавливается, когда отдыхаешь.
 //   Блок: меч в руке (1) + держать ПКМ. Удар почти не проходит, но съедает выносливость.
 //         Выносливость кончилась — блок пробит, пара секунд без защиты.
+//   ПАРИРОВАНИЕ: поставь блок в самый последний момент (за 0.25 сек до удара) — урона нет вовсе,
+//         а тварь «открыта» и шатается — её можно добить.
+//   Перекат (Ctrl) — на миг неуязвим.
 // Смерть: половина ресурсов из сумки выпадает на месте гибели. Через 5 сек — возрождение в замке.
 public class PlayerHealth : MonoBehaviour
 {
@@ -37,6 +40,11 @@ public class PlayerHealth : MonoBehaviour
     string deathText = "Ты погиб";
     bool droppedLoot;
     PlayerHotbar hotbar;
+    PlayerMovement movement;
+    float blockStart = -100f;
+    string notice;
+    float noticeUntil;
+    Color noticeColor;
 
     void OnEnable() { Local = this; }
     void OnDisable() { if (Local == this) Local = null; }
@@ -46,6 +54,7 @@ public class PlayerHealth : MonoBehaviour
         Health = maxHealth;
         Stamina = maxStamina;
         hotbar = GetComponent<PlayerHotbar>();
+        movement = GetComponent<PlayerMovement>();
         NetworkPlayer np = GetComponent<NetworkPlayer>();
         if (np != null) respawnPoint = np.spawnPoint;
     }
@@ -61,6 +70,28 @@ public class PlayerHealth : MonoBehaviour
     }
 
     public void TakeDamage(float amount) => TakeDamage(amount, null, true);
+
+    // Удар твари (attackerId — какая тварь, -1 если плевок и т.п.)
+    public void TakeHit(float amount, int attackerId)
+    {
+        if (IsDead) return;
+        if (movement != null && movement.IsDodging) { Notice("Уклон!", new Color(0.6f, 0.9f, 1f)); return; }
+        if (IsBlocking && attackerId >= 0 && Time.time - blockStart < 0.25f)
+        {
+            // Парирование!
+            Notice("ПАРИРОВАНО!", new Color(1f, 0.85f, 0.3f));
+            EnemyManager.RequestParry(attackerId);
+            PlayerCamera.Shake(0.35f);
+            CombatFx.Hitstop(0.12f);
+            Stamina = Mathf.Min(maxStamina, Stamina + 10f);
+            blockFlash = 1f;
+            return;
+        }
+        TakeDamage(amount, null, true);
+        PlayerCamera.Shake(IsBlocking ? 0.15f : Mathf.Clamp(amount / 30f, 0.15f, 0.6f));
+    }
+
+    void Notice(string text, Color c) { notice = text; noticeColor = c; noticeUntil = Time.time + 1f; }
 
     public void TakeDamage(float amount, string reason, bool blockable)
     {
@@ -141,6 +172,7 @@ public class PlayerHealth : MonoBehaviour
         Mouse mouse = Mouse.current;
         bool wantBlock = mouse != null && mouse.rightButton.isPressed && Cursor.lockState == CursorLockMode.Locked &&
                          (hotbar == null || hotbar.Current == Tool.Sword) && Time.time >= blockBrokenUntil && Stamina > 1f;
+        if (wantBlock && !IsBlocking) blockStart = Time.time;
         IsBlocking = wantBlock;
         if (IsBlocking) lastStaminaUse = Time.time - staminaDelay * 0.5f; // в блоке восстанавливается медленнее
 
@@ -164,6 +196,13 @@ public class PlayerHealth : MonoBehaviour
             Color c = Color.Lerp(new Color(0.7f, 0.8f, 1f, 0.8f), Color.white, blockFlash);
             Color old = GUI.color; GUI.color = c;
             GUI.Label(new Rect(0, Screen.height / 2f + 22, Screen.width, 26), "[ БЛОК ]", Hud.Center);
+            GUI.color = old;
+        }
+
+        if (Time.time < noticeUntil)
+        {
+            Color old = GUI.color; GUI.color = noticeColor;
+            GUI.Label(new Rect(0, Screen.height / 2f - 110, Screen.width, 34), notice, Hud.CenterBig);
             GUI.color = old;
         }
 

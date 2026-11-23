@@ -36,7 +36,8 @@ public class EnemyManager : MonoBehaviour
 
     public class PlayerInfo { public Transform transform; public ulong ownerId; public bool dead; }
 
-    const string MsgState = "E.enemies", MsgHitReq = "E.enemyHit", MsgHurt = "E.hurt", MsgWaveReq = "E.waveReq", MsgSpit = "E.spit";
+    const string MsgState = "E.enemies", MsgHitReq = "E.enemyHit", MsgHurt = "E.hurt", MsgWaveReq = "E.waveReq", MsgSpit = "E.spit",
+                 MsgParryReq = "E.parry", MsgGrabReq = "E.grab", MsgGrabRes = "E.grabRes", MsgThrowReq = "E.throw", MsgFx = "E.fx";
 
     readonly Dictionary<int, Enemy> enemies = new Dictionary<int, Enemy>();
     readonly List<PlayerInfo> players = new List<PlayerInfo>();
@@ -84,6 +85,7 @@ public class EnemyManager : MonoBehaviour
             playersTimer -= Time.deltaTime;
             if (playersTimer <= 0f) { playersTimer = 1f; RefreshPlayers(); }
 
+            AssignTokens();
             var dead = new List<int>();
             foreach (var kv in enemies)
             {
@@ -106,6 +108,37 @@ public class EnemyManager : MonoBehaviour
                 try { w.WriteValueSafe(1); Net.ToHost(MsgWaveReq, w); } finally { w.Dispose(); }
             }
         }
+    }
+
+    // ---------- Очередь на атаку: на одного игрока нападают максимум двое, остальные кружат ----------
+    public int maxAttackersPerPlayer = 2;
+
+    void AssignTokens()
+    {
+        foreach (PlayerInfo p in players)
+        {
+            int have = 0;
+            var waiting = new List<Enemy>();
+            foreach (var kv in enemies)
+            {
+                Enemy e = kv.Value;
+                if (e == null || e.TargetOwner != p.ownerId || e.shootRange > 0f) continue;
+                if (e.HasToken) have += e.kind == EnemyKind.Brute ? 2 : 1;
+                else if (Time.time >= e.TokenCooldownUntil && e.CurrentState == Enemy.State.Move) waiting.Add(e);
+            }
+            Vector3 pp = p.transform != null ? p.transform.position : Vector3.zero;
+            waiting.Sort((a, b) => (a.transform.position - pp).sqrMagnitude.CompareTo((b.transform.position - pp).sqrMagnitude));
+            foreach (Enemy e in waiting)
+            {
+                int cost = e.kind == EnemyKind.Brute ? 2 : 1; // громила занимает оба места
+                if (have + cost > maxAttackersPerPlayer && have > 0) break;
+                e.HasToken = true;
+                have += cost;
+            }
+        }
+        // Кто потерял цель — отдаёт очередь
+        foreach (var kv in enemies)
+            if (kv.Value != null && kv.Value.TargetOwner == Net.NoOne) kv.Value.HasToken = false;
     }
 
     // ---------- Волна ----------
@@ -220,38 +253,122 @@ public class EnemyManager : MonoBehaviour
         }
     }
 
-    // ---------- Удары ----------
-    // from — откуда ударили (тварь отлетает в обратную сторону)
-    public static void RequestHit(Enemy e, float damage, Vector3 from)
+    // ---------- Удары игроков по тварям ----------
+    // from — откуда ударили (тварь отлетает в обратную сторону), type — какой удар
+    public static void RequestHit(Enemy e, float damage, Vector3 from, HitType type)
     {
         if (Instance == null || e == null) return;
         e.Flash();
-        if (Net.IsHost) { Instance.ApplyHit(e.id, damage, from); return; }
-        FastBufferWriter w = Net.Writer(32);
-        try { w.WriteValueSafe(e.id); w.WriteValueSafe(damage); w.WriteValueSafe(from); Net.ToHost(MsgHitReq, w); } finally { w.Dispose(); }
+        if (Net.IsHost) { Instance.ApplyHit(e.id, damage, from, (int)type); return; }
+        FastBufferWriter w = Net.Writer(40);
+        try { w.WriteValueSafe(e.id); w.WriteValueSafe(damage); w.WriteValueSafe(from); w.WriteValueSafe((int)type); Net.ToHost(MsgHitReq, w); } finally { w.Dispose(); }
     }
 
-    void ApplyHit(int id, float damage, Vector3 from)
+    void ApplyHit(int id, float damage, Vector3 from, int type)
     {
-        if (enemies.TryGetValue(id, out Enemy e) && e != null)
-        {
-            e.Health -= damage;
-            e.Flash();
-            Vector3 away = e.transform.position - from; away.y = 0f;
-            if (away.sqrMagnitude > 0.01f) e.Knock(away.normalized * (damage * 0.35f) + Vector3.up * 2f);
-        }
+        if (enemies.TryGetValue(id, out Enemy e) && e != null) e.ApplyHit(damage, from, (HitType)type);
     }
 
-    // Тварь ударила игрока (вызывает хост)
-    public static void HurtPlayer(ulong ownerId, float damage)
+    // Игрок парировал удар твари
+    public static void RequestParry(int enemyId) => SendSimple(MsgParryReq, enemyId, id => Instance.Find(id)?.Parried());
+
+    // Схватить тварь. Ответ придёт в GrabResult (у того, кто хватал)
+    public static event System.Action<int, bool> GrabResult;
+
+    public static void RequestGrab(Enemy e)
+    {
+        if (Instance == null || e == null) return;
+        if (Net.IsHost) { Instance.ServerGrab(e.id, Net.LocalId); return; }
+        FastBufferWriter w = Net.Writer(16);
+        try { w.WriteValueSafe(e.id); Net.ToHost(MsgGrabReq, w); } finally { w.Dispose(); }
+    }
+
+    void ServerGrab(int id, ulong by)
+    {
+        Enemy e = Find(id);
+        Transform t = PlayerTransform(by);
+        bool ok = e != null && e.Grab(t, by);
+        if (by == Net.LocalId) { GrabResult?.Invoke(id, ok); return; }
+        FastBufferWriter w = Net.Writer(16);
+        try { w.WriteValueSafe(id); w.WriteValueSafe(ok); Net.ToClient(MsgGrabRes, by, w); } finally { w.Dispose(); }
+    }
+
+    // Бросить схваченную тварь
+    public static void RequestThrow(int enemyId, Vector3 velocity, float spin)
+    {
+        if (Instance == null) return;
+        if (Net.IsHost) { Instance.Find(enemyId)?.Throw(velocity, spin); return; }
+        FastBufferWriter w = Net.Writer(32);
+        try { w.WriteValueSafe(enemyId); w.WriteValueSafe(velocity); w.WriteValueSafe(spin); Net.ToHost(MsgThrowReq, w); } finally { w.Dispose(); }
+    }
+
+    static void SendSimple(string msg, int id, System.Action<int> asHost)
+    {
+        if (Instance == null) return;
+        if (Net.IsHost) { asHost(id); return; }
+        FastBufferWriter w = Net.Writer(16);
+        try { w.WriteValueSafe(id); Net.ToHost(msg, w); } finally { w.Dispose(); }
+    }
+
+    public Enemy Find(int id) => enemies.TryGetValue(id, out Enemy e) && e != null ? e : null;
+
+    Transform PlayerTransform(ulong owner)
+    {
+        foreach (PlayerInfo p in players) if (p.ownerId == owner && p.transform != null) return p.transform;
+        RefreshPlayers();
+        foreach (PlayerInfo p in players) if (p.ownerId == owner && p.transform != null) return p.transform;
+        return null;
+    }
+
+    // Тварь ударила игрока (вызывает хост). attackerId — какая тварь (чтобы можно было её парировать)
+    public static void HurtPlayer(ulong ownerId, float damage, int attackerId = -1)
     {
         if (ownerId == Net.LocalId)
         {
-            if (PlayerHealth.Local != null) PlayerHealth.Local.TakeDamage(damage);
+            if (PlayerHealth.Local != null) PlayerHealth.Local.TakeHit(damage, attackerId);
             return;
         }
-        FastBufferWriter w = Net.Writer(8);
-        try { w.WriteValueSafe(damage); Net.ToClient(MsgHurt, ownerId, w); } finally { w.Dispose(); }
+        FastBufferWriter w = Net.Writer(16);
+        try { w.WriteValueSafe(damage); w.WriteValueSafe(attackerId); Net.ToClient(MsgHurt, ownerId, w); } finally { w.Dispose(); }
+    }
+
+    // Глухой удар (тварь врезалась в стену, в землю, в колья): пыль и тряска камеры у тех, кто рядом
+    public static void Impact(Vector3 at, float strength)
+    {
+        LocalImpact(at, strength);
+        if (!Net.Online) return;
+        FastBufferWriter w = Net.Writer(24);
+        try { w.WriteValueSafe(at); w.WriteValueSafe(strength); Net.ToAllClients(MsgFx, w); } finally { w.Dispose(); }
+    }
+
+    static Material dustMat;
+    static void LocalImpact(Vector3 at, float strength)
+    {
+        if (dustMat == null)
+        {
+            Shader sh = Shader.Find("Universal Render Pipeline/Lit");
+            dustMat = new Material(sh != null ? sh : Shader.Find("Standard"));
+            Color c = new Color(0.35f, 0.3f, 0.25f);
+            if (dustMat.HasProperty("_BaseColor")) dustMat.SetColor("_BaseColor", c);
+        }
+        int n = 3 + Mathf.RoundToInt(strength * 6f);
+        for (int i = 0; i < n; i++)
+        {
+            GameObject d = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            d.layer = 2;
+            Destroy(d.GetComponent<Collider>());
+            d.transform.position = at + Random.insideUnitSphere * 0.4f;
+            d.transform.localScale = Vector3.one * Random.Range(0.08f, 0.2f);
+            d.transform.rotation = Random.rotation;
+            d.GetComponent<Renderer>().sharedMaterial = dustMat;
+            d.AddComponent<FlyAway>().velocity = Random.insideUnitSphere * 3f + Vector3.up * 2.5f;
+            Destroy(d, 0.8f);
+        }
+        if (PlayerHealth.Local != null)
+        {
+            float dist = Vector3.Distance(PlayerHealth.Local.transform.position, at);
+            if (dist < 14f) PlayerCamera.Shake(strength * 0.8f * (1f - dist / 14f));
+        }
     }
 
     // ---------- Плевки ----------
@@ -278,20 +395,21 @@ public class EnemyManager : MonoBehaviour
     {
         if (!Net.Online) return;
         int n = enemies.Count;
-        var ids = new int[n]; var pos = new Vector3[n]; var yaw = new float[n]; var hp = new float[n]; var climb = new bool[n]; var kinds = new int[n];
+        var ids = new int[n]; var pos = new Vector3[n]; var yaw = new float[n]; var hp = new float[n]; var climb = new bool[n]; var kinds = new int[n]; var states = new int[n]; var held = new int[n];
         int i = 0;
         foreach (var kv in enemies)
         {
             if (kv.Value == null) { n--; continue; }
             ids[i] = kv.Key; pos[i] = kv.Value.transform.position; yaw[i] = kv.Value.transform.eulerAngles.y; hp[i] = kv.Value.HealthFraction; climb[i] = kv.Value.Climbing; kinds[i] = (int)kv.Value.kind;
+            states[i] = (int)kv.Value.CurrentState; held[i] = kv.Value.HeldBy;
             i++;
         }
-        System.Array.Resize(ref ids, i); System.Array.Resize(ref pos, i); System.Array.Resize(ref yaw, i); System.Array.Resize(ref hp, i); System.Array.Resize(ref climb, i); System.Array.Resize(ref kinds, i);
+        System.Array.Resize(ref ids, i); System.Array.Resize(ref pos, i); System.Array.Resize(ref yaw, i); System.Array.Resize(ref hp, i); System.Array.Resize(ref climb, i); System.Array.Resize(ref kinds, i); System.Array.Resize(ref states, i); System.Array.Resize(ref held, i);
         FastBufferWriter w = Net.Writer(64 + i * 32);
         try
         {
             w.WriteValueSafe(wave);
-            w.WriteValueSafe(ids); w.WriteValueSafe(pos); w.WriteValueSafe(yaw); w.WriteValueSafe(hp); w.WriteValueSafe(climb); w.WriteValueSafe(kinds);
+            w.WriteValueSafe(ids); w.WriteValueSafe(pos); w.WriteValueSafe(yaw); w.WriteValueSafe(hp); w.WriteValueSafe(climb); w.WriteValueSafe(kinds); w.WriteValueSafe(states); w.WriteValueSafe(held);
             Net.ToAllClients(MsgState, w, NetworkDelivery.ReliableFragmentedSequenced);
         }
         finally { w.Dispose(); }
@@ -303,13 +421,14 @@ public class EnemyManager : MonoBehaviour
         {
             r.ReadValueSafe(out int w);
             r.ReadValueSafe(out int[] ids); r.ReadValueSafe(out Vector3[] pos); r.ReadValueSafe(out float[] yaw); r.ReadValueSafe(out float[] hp); r.ReadValueSafe(out bool[] climb); r.ReadValueSafe(out int[] kinds);
+            r.ReadValueSafe(out int[] states); r.ReadValueSafe(out int[] held);
             if (Net.IsHost) return;
             wave = w;
             var alive = new HashSet<int>(ids);
             for (int i = 0; i < ids.Length; i++)
             {
                 if (!enemies.TryGetValue(ids[i], out Enemy e) || e == null) e = CreateEnemy(ids[i], pos[i], yaw[i], false, i < kinds.Length ? (EnemyKind)kinds[i] : EnemyKind.Crawler);
-                e.SetNetState(pos[i], yaw[i], hp[i], i < climb.Length && climb[i]);
+                e.SetNetState(pos[i], yaw[i], hp[i], i < climb.Length && climb[i], i < states.Length ? states[i] : 0, i < held.Length ? held[i] : -1);
             }
             var gone = new List<int>();
             foreach (var kv in enemies) if (!alive.Contains(kv.Key)) gone.Add(kv.Key);
@@ -317,13 +436,26 @@ public class EnemyManager : MonoBehaviour
         });
         cmm.RegisterNamedMessageHandler(MsgHitReq, (sender, r) =>
         {
-            r.ReadValueSafe(out int id); r.ReadValueSafe(out float dmg); r.ReadValueSafe(out Vector3 from);
-            if (Net.IsHost) ApplyHit(id, dmg, from);
+            r.ReadValueSafe(out int id); r.ReadValueSafe(out float dmg); r.ReadValueSafe(out Vector3 from); r.ReadValueSafe(out int type);
+            if (Net.IsHost) ApplyHit(id, dmg, from, type);
         });
         cmm.RegisterNamedMessageHandler(MsgHurt, (sender, r) =>
         {
-            r.ReadValueSafe(out float dmg);
-            if (PlayerHealth.Local != null) PlayerHealth.Local.TakeDamage(dmg);
+            r.ReadValueSafe(out float dmg); r.ReadValueSafe(out int attacker);
+            if (PlayerHealth.Local != null) PlayerHealth.Local.TakeHit(dmg, attacker);
+        });
+        cmm.RegisterNamedMessageHandler(MsgParryReq, (sender, r) => { r.ReadValueSafe(out int id); if (Net.IsHost) Find(id)?.Parried(); });
+        cmm.RegisterNamedMessageHandler(MsgGrabReq, (sender, r) => { r.ReadValueSafe(out int id); if (Net.IsHost) ServerGrab(id, sender); });
+        cmm.RegisterNamedMessageHandler(MsgGrabRes, (sender, r) => { r.ReadValueSafe(out int id); r.ReadValueSafe(out bool ok); GrabResult?.Invoke(id, ok); });
+        cmm.RegisterNamedMessageHandler(MsgThrowReq, (sender, r) =>
+        {
+            r.ReadValueSafe(out int id); r.ReadValueSafe(out Vector3 vel); r.ReadValueSafe(out float spin);
+            if (Net.IsHost) Find(id)?.Throw(vel, spin);
+        });
+        cmm.RegisterNamedMessageHandler(MsgFx, (sender, r) =>
+        {
+            r.ReadValueSafe(out Vector3 at); r.ReadValueSafe(out float str);
+            if (!Net.IsHost) LocalImpact(at, str);
         });
         cmm.RegisterNamedMessageHandler(MsgSpit, (sender, r) =>
         {
@@ -348,12 +480,20 @@ public class EnemyManager : MonoBehaviour
         foreach (var kv in enemies)
         {
             Enemy e = kv.Value;
-            if (e == null || e.HealthFraction >= 0.999f) continue;
+            if (e == null) continue;
             Vector3 world = e.transform.position + Vector3.up * (2.1f * e.bodyScale);
+            bool open = e.CurrentState == Enemy.State.Stagger;
+            if (e.HealthFraction >= 0.999f && !open) continue;
             if (Vector3.Distance(world, cam.transform.position) > 30f) continue;
             Vector3 s = cam.WorldToScreenPoint(world);
             if (s.z < 0f) continue;
             Hud.Bar(new Rect(s.x - 30, Screen.height - s.y, 60, 6), e.HealthFraction, new Color(0.8f, 0.2f, 0.9f), null);
+            if (open)
+            {
+                Color old = GUI.color; GUI.color = new Color(1f, 0.85f, 0.2f);
+                GUI.Label(new Rect(s.x - 100, Screen.height - s.y - 30, 200, 24), "ОТКРЫТ — добей!", Hud.Center);
+                GUI.color = old;
+            }
         }
     }
 }

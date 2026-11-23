@@ -17,6 +17,14 @@ public class PlayerMovement : MonoBehaviour
     [Header("Пинать предметы")]
     public float pushPower = 2f;     // с какой силой толкаем обломки и ресурсы
 
+    [Header("Перекат (Ctrl или C)")]
+    public float dodgeSpeed = 11f;
+    public float dodgeTime = 0.32f;
+    public float dodgeCost = 20f;
+    public bool IsDodging => Time.time < dodgeUntil - 0.05f;
+    float dodgeUntil, nextDodge;
+    Vector3 dodgeDir;
+
     [Header("Выносливость и падение")]
     public float sprintCost = 14f;     // в секунду бега
     public float jumpCost = 10f;
@@ -25,6 +33,7 @@ public class PlayerMovement : MonoBehaviour
 
     CharacterController controller;
     PlayerHealth health;
+    public float DodgeRoll { get; private set; } // 0..1 — для наклона камеры при перекате
     float verticalVelocity;          // скорость вверх/вниз
 
     void Awake()
@@ -57,6 +66,17 @@ public class PlayerMovement : MonoBehaviour
                       (health == null || health.UseStamina(sprintCost * Time.deltaTime, true));
         float speed = sprint ? sprintSpeed : walkSpeed;
         if (health != null && health.IsBlocking) speed *= 0.5f;
+
+        // Перекат: рывок в сторону движения (или назад), на миг неуязвим
+        if ((kb.leftCtrlKey.wasPressedThisFrame || kb.cKey.wasPressedThisFrame) && Time.time >= nextDodge && controller.isGrounded &&
+            (health == null || health.UseStamina(dodgeCost, false)))
+        {
+            dodgeDir = move.sqrMagnitude > 0.01f ? move.normalized : -transform.forward;
+            dodgeUntil = Time.time + dodgeTime;
+            nextDodge = Time.time + dodgeTime + 0.35f;
+        }
+        if (Time.time < dodgeUntil) { move = dodgeDir; speed = dodgeSpeed; }
+        DodgeRoll = Time.time < dodgeUntil ? 1f - (dodgeUntil - Time.time) / dodgeTime : 0f;
 
         // 3. Прыжок и гравитация
         if (controller.isGrounded && verticalVelocity < 0)

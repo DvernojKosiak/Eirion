@@ -1,75 +1,88 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-// Удар мечом: левая кнопка мыши. Бьёт то, что в центре экрана (прицел).
-// Пока умеет ломать постройки. Потом добавим врагов.
-// Ещё рисует прицел и прочность детали, на которую смотришь.
+// Меч: ЛКМ — взмах. Свои постройки меч НЕ ломает (для этого молот).
+// Зато толкает обломки и ресурсы. Урон по врагам добавим, когда появятся враги.
+// Ещё рисует прицел.
 public class PlayerCombat : MonoBehaviour
 {
-    public float damage = 34f;     // урон за удар
-    public float range = 3f;       // дальность удара
-    public float cooldown = 0.45f; // пауза между ударами (сек)
-    public Transform weapon;       // модель меча (для взмаха)
+    public float range = 3f;
+    public float cooldown = 0.45f;
+    public float pushForce = 6f;
 
     Camera cam;
-    PlayerBuilder builder;
-    BuildPiece looked;
+    PlayerHotbar hotbar;
     float nextHitTime;
-    float swing;                   // 1 — взмах только начался, 0 — меч в покое
-    Quaternion weaponRestRotation;
+    float swing;
+    Transform swingModel;
+    Quaternion restRotation;
+
+    public void PlaySwing()
+    {
+        swing = 1f;
+    }
 
     void Start()
     {
         cam = Camera.main;
-        builder = GetComponent<PlayerBuilder>();
-        if (weapon != null) weaponRestRotation = weapon.localRotation;
+        hotbar = GetComponent<PlayerHotbar>();
     }
 
     void Update()
     {
-        bool building = builder != null && builder.IsBuilding;
-        if (weapon != null) weapon.gameObject.SetActive(!building);
+        Transform model = hotbar != null ? hotbar.CurrentModel : null;
+        if (model != swingModel)
+        {
+            if (swingModel != null) swingModel.localRotation = restRotation;
+            swingModel = model;
+            if (swingModel != null) restRotation = swingModel.localRotation;
+        }
 
-        looked = building ? null : AimHelper.LookedPiece(cam, transform, range);
-
+        bool swordInHand = hotbar == null || hotbar.Current == Tool.Sword;
         Mouse mouse = Mouse.current;
-        if (!building && mouse != null && Cursor.lockState == CursorLockMode.Locked &&
+        if (swordInHand && mouse != null && Cursor.lockState == CursorLockMode.Locked &&
             mouse.leftButton.wasPressedThisFrame && Time.time >= nextHitTime)
         {
             nextHitTime = Time.time + cooldown;
-            swing = 1f;
-            if (looked != null) BuildingManager.Damage(looked, damage);
+            PlaySwing();
+            PushThings();
         }
 
-        // Анимация взмаха
-        if (weapon != null)
+        if (swingModel != null)
         {
             swing = Mathf.MoveTowards(swing, 0f, Time.deltaTime / cooldown);
             float a = Mathf.Sin(swing * Mathf.PI) * 80f;
-            weapon.localRotation = weaponRestRotation * Quaternion.Euler(a, -a * 0.4f, 0f);
+            swingModel.localRotation = restRotation * Quaternion.Euler(a, -a * 0.4f, 0f);
+        }
+    }
+
+    // Толкнуть обломки и ресурсы перед собой
+    void PushThings()
+    {
+        if (cam == null) return;
+        Vector3 center = transform.position + Vector3.up * 0.6f + cam.transform.forward * (range * 0.6f);
+        foreach (Collider c in Physics.OverlapSphere(center, range * 0.6f, ~0, QueryTriggerInteraction.Ignore))
+        {
+            Rigidbody rb = c.attachedRigidbody;
+            if (rb == null || rb.isKinematic) continue;
+            rb.AddForce((cam.transform.forward + Vector3.up * 0.4f) * pushForce, ForceMode.VelocityChange);
         }
     }
 
     void OnGUI()
     {
-        // Прицел
         GUI.Label(new Rect(Screen.width / 2f - 6, Screen.height / 2f - 12, 20, 24), "+", Hud.Big);
-
-        if (looked == null) return;
-        string text = looked.displayName + "   " + Mathf.CeilToInt(looked.Health) + " / " + looked.maxHealth;
-        Hud.Bar(new Rect(Screen.width / 2f - 120, Screen.height / 2f + 30, 240, 14), looked.Health / looked.maxHealth, text);
     }
 }
 
-// Общие помощники: куда смотрит игрок, рисование подсказок на экране
+// Общие помощники: куда смотрит игрок
 public static class AimHelper
 {
-    // Луч из камеры в центр экрана. Пропускает самого игрока.
     public static bool Aim(Camera cam, Transform self, float reach, out RaycastHit result)
     {
         result = default;
         if (cam == null) return false;
-        // В виде от 3-го лица камера стоит дальше — добавляем это расстояние
+        // В виде от 3-го лица камера дальше — добавляем это расстояние
         Vector3 head = cam.transform.parent != null ? cam.transform.parent.position : cam.transform.position;
         float extra = Vector3.Distance(cam.transform.position, head);
         Ray ray = new Ray(cam.transform.position, cam.transform.forward);
@@ -90,17 +103,18 @@ public static class AimHelper
     }
 }
 
+// Общие помощники для надписей на экране
 public static class Hud
 {
     static GUIStyle big, small;
     public static GUIStyle Big => big ??= new GUIStyle(GUI.skin.label) { fontSize = 22, fontStyle = FontStyle.Bold, normal = { textColor = Color.white } };
     public static GUIStyle Small => small ??= new GUIStyle(GUI.skin.label) { fontSize = 16, normal = { textColor = Color.white } };
 
-    public static void Bar(Rect r, float fill, string text)
+    public static void Bar(Rect r, float fill, Color color, string text)
     {
         GUI.DrawTexture(r, Texture2D.whiteTexture, ScaleMode.StretchToFill, false, 0, new Color(0, 0, 0, 0.6f), 0, 0);
         Rect f = new Rect(r.x, r.y, r.width * Mathf.Clamp01(fill), r.height);
-        GUI.DrawTexture(f, Texture2D.whiteTexture, ScaleMode.StretchToFill, false, 0, Color.Lerp(Color.red, Color.green, fill), 0, 0);
-        GUI.Label(new Rect(r.x, r.y - 24, r.width + 200, 24), text, Small);
+        GUI.DrawTexture(f, Texture2D.whiteTexture, ScaleMode.StretchToFill, false, 0, color, 0, 0);
+        if (!string.IsNullOrEmpty(text)) GUI.Label(new Rect(r.x, r.y - 24, r.width + 300, 24), text, Small);
     }
 }

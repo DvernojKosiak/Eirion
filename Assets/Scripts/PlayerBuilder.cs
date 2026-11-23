@@ -2,77 +2,130 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-// Режим стройки.
-//   B          — включить / выключить стройку
-//   1..9, Q/E  — выбрать деталь
+// Молот (клавиша 2) — строительство.
+//   Q / E      — выбрать деталь
 //   R          — повернуть на 90°
-//   ЛКМ        — поставить (если призрак зелёный)
-//   X          — снести деталь, на которую смотришь
-// Вешается на Player.
+//   ЛКМ        — поставить (берётся из инвентаря, если есть, иначе тратятся ресурсы)
+//   ПКМ (держать) — разобрать деталь под прицелом, выпадут ресурсы
+//   F          — взять деталь целиком в руки, чтобы поставить в другом месте
 public class PlayerBuilder : MonoBehaviour
 {
     public List<BuildPiece> pieces = new List<BuildPiece>(); // что можно строить
-    public Material ghostMaterial;  // полупрозрачный материал для «призрака»
-    public float reach = 12f;       // как далеко можно строить
-    public float gridSize = 1f;     // шаг сетки в метрах
+    public Material ghostMaterial;
+    public float reach = 12f;
+    public float gridSize = 1f;
+    public float dismantleTime = 1.2f; // сколько держать ПКМ
 
-    public bool IsBuilding { get; private set; }
+    public bool IsBuilding => hotbar == null || hotbar.Current == Tool.Hammer;
 
     Camera cam;
+    PlayerHotbar hotbar;
+    PlayerCombat combat;
+    Inventory inventory;
+
     int selected;
     float yaw;
     GameObject ghost;
+    int ghostFor = -1;
     Material ghostMat;
     bool canPlace;
     Vector3 placePos;
 
+    BuildPiece looked;
+    BuildPiece dismantleTarget;
+    float dismantleProgress;
+    float nextSwing;
+    string message;
+    float messageUntil;
+
     static readonly Color Ok = new Color(0.3f, 1f, 0.4f, 0.4f);
     static readonly Color Bad = new Color(1f, 0.25f, 0.2f, 0.4f);
 
-    void Start() { cam = Camera.main; }
+    void Start()
+    {
+        cam = Camera.main;
+        hotbar = GetComponent<PlayerHotbar>();
+        combat = GetComponent<PlayerCombat>();
+        inventory = GetComponent<Inventory>();
+    }
 
     void Update()
     {
         Keyboard kb = Keyboard.current;
         Mouse mouse = Mouse.current;
-        if (kb == null || pieces.Count == 0) return;
+        if (kb == null || mouse == null || pieces.Count == 0) return;
 
-        if (kb.bKey.wasPressedThisFrame) SetBuilding(!IsBuilding);
-        if (!IsBuilding) return;
+        if (!IsBuilding)
+        {
+            if (ghost != null) { Destroy(ghost); ghostFor = -1; }
+            looked = null;
+            dismantleProgress = 0f;
+            return;
+        }
 
-        for (int i = 0; i < Mathf.Min(9, pieces.Count); i++)
-            if (kb[(Key)((int)Key.Digit1 + i)].wasPressedThisFrame) Select(i);
-        if (kb.qKey.wasPressedThisFrame) Select((selected - 1 + pieces.Count) % pieces.Count);
-        if (kb.eKey.wasPressedThisFrame) Select((selected + 1) % pieces.Count);
+        if (kb.qKey.wasPressedThisFrame) selected = (selected - 1 + pieces.Count) % pieces.Count;
+        if (kb.eKey.wasPressedThisFrame) selected = (selected + 1) % pieces.Count;
         if (kb.rKey.wasPressedThisFrame) yaw = (yaw + 90f) % 360f;
+        if (ghostFor != selected) MakeGhost();
+
+        bool locked = Cursor.lockState == CursorLockMode.Locked;
+        looked = AimHelper.LookedPiece(cam, transform, reach);
+
+        // --- Разобрать: держим ПКМ ---
+        if (locked && mouse.rightButton.isPressed && looked != null)
+        {
+            if (looked != dismantleTarget) { dismantleTarget = looked; dismantleProgress = 0f; }
+            dismantleProgress += Time.deltaTime / dismantleTime;
+            if (Time.time >= nextSwing && combat != null) { combat.PlaySwing(); nextSwing = Time.time + 0.35f; }
+            if (dismantleProgress >= 1f)
+            {
+                BuildingManager.Dismantle(looked, 1f);
+                dismantleTarget = null;
+                dismantleProgress = 0f;
+            }
+            if (ghost != null) ghost.SetActive(false);
+            return;
+        }
+        dismantleTarget = null;
+        dismantleProgress = 0f;
+
+        // --- Взять в руки: F ---
+        if (locked && kb.fKey.wasPressedThisFrame && looked != null)
+        {
+            string id = BuildingManager.PickUp(looked);
+            if (inventory != null) inventory.AddPiece(id);
+            int index = pieces.FindIndex(p => p.pieceId == id);
+            if (index >= 0) selected = index;
+            Say("Взял: " + (index >= 0 ? pieces[index].displayName : id));
+            looked = null;
+            if (ghostFor != selected) MakeGhost();
+        }
 
         UpdateGhost();
 
-        bool locked = Cursor.lockState == CursorLockMode.Locked;
-        if (locked && mouse != null && mouse.leftButton.wasPressedThisFrame && canPlace)
-            BuildingManager.Place(pieces[selected], placePos, Quaternion.Euler(0f, yaw, 0f));
-
-        if (locked && kb.xKey.wasPressedThisFrame)
-            BuildingManager.Demolish(AimHelper.LookedPiece(cam, transform, reach));
+        // --- Поставить: ЛКМ ---
+        if (locked && mouse.leftButton.wasPressedThisFrame && canPlace)
+        {
+            BuildPiece p = pieces[selected];
+            bool fromHands = inventory != null && inventory.TakePiece(p.pieceId);
+            if (fromHands || inventory == null || inventory.Spend(p))
+            {
+                BuildingManager.Place(p, placePos, Quaternion.Euler(0f, yaw, 0f));
+                if (combat != null) combat.PlaySwing();
+            }
+            else Say("Не хватает ресурсов: нужно " + p.CostText);
+        }
     }
 
-    void SetBuilding(bool on)
-    {
-        IsBuilding = on;
-        if (on) Select(selected);
-        else if (ghost != null) Destroy(ghost);
-    }
+    void Say(string text) { message = text; messageUntil = Time.time + 2f; }
 
-    void Select(int index)
+    // Призрак — копия детали без коллайдеров, полупрозрачная
+    void MakeGhost()
     {
-        selected = index;
         if (ghost != null) Destroy(ghost);
-        ghost = MakeGhost(pieces[selected]);
-    }
+        ghostFor = selected;
+        BuildPiece prefab = pieces[selected];
 
-    // Призрак — копия детали без коллайдеров и прочности, полупрозрачная
-    GameObject MakeGhost(BuildPiece prefab)
-    {
         GameObject holder = new GameObject("GhostHolder");
         holder.SetActive(false); // чтобы копия не «ожила» раньше времени
         GameObject g = Instantiate(prefab.gameObject, holder.transform);
@@ -91,20 +144,16 @@ public class PlayerBuilder : MonoBehaviour
         g.transform.SetParent(null);
         Destroy(holder);
         g.SetActive(true);
-        return g;
+        ghost = g;
     }
 
     void UpdateGhost()
     {
+        canPlace = false;
         if (ghost == null) return;
         BuildPiece piece = pieces[selected];
-        canPlace = false;
 
-        if (!AimHelper.Aim(cam, transform, reach, out RaycastHit hit))
-        {
-            ghost.SetActive(false);
-            return;
-        }
+        if (!AimHelper.Aim(cam, transform, reach, out RaycastHit hit)) { ghost.SetActive(false); return; }
         ghost.SetActive(true);
 
         Vector3 p = hit.point + hit.normal * 0.05f;
@@ -112,9 +161,9 @@ public class PlayerBuilder : MonoBehaviour
         p.z = Mathf.Round(p.z / gridSize) * gridSize;
 
         if (hit.normal.y > 0.7f)
-            p.y = hit.point.y; // ставим сверху того, во что смотрим
+            p.y = hit.point.y; // сверху того, во что смотрим
         else if (Physics.Raycast(p + Vector3.up * 0.2f, Vector3.down, out RaycastHit down, 50f, ~(1 << 2), QueryTriggerInteraction.Ignore))
-            p.y = down.point.y; // смотрим в стену — ставим рядом на землю
+            p.y = down.point.y; // смотрим в стену — ставим рядом
         else
             p.y = hit.point.y;
 
@@ -122,13 +171,14 @@ public class PlayerBuilder : MonoBehaviour
         ghost.transform.SetPositionAndRotation(p, rot);
         placePos = p;
 
-        // Нельзя ставить, если сильно пересекается с чем-то (допускаем небольшое касание)
+        // Нельзя, если сильно пересекается с чем-то (лёгкое касание можно)
         Vector3 center = p + Vector3.up * (piece.size.y * 0.5f);
         canPlace = !Physics.CheckBox(center, piece.size * 0.4f, rot, ~(1 << 2), QueryTriggerInteraction.Ignore);
 
+        bool affordable = inventory == null || inventory.PieceCount(piece.pieceId) > 0 || inventory.CanAfford(piece);
         if (ghostMat != null)
         {
-            Color c = canPlace ? Ok : Bad;
+            Color c = canPlace && affordable ? Ok : Bad;
             ghostMat.SetColor("_BaseColor", c);
             ghostMat.SetColor("_Color", c);
         }
@@ -136,25 +186,43 @@ public class PlayerBuilder : MonoBehaviour
 
     void OnGUI()
     {
-        if (!IsBuilding)
-        {
-            GUI.Label(new Rect(12, Screen.height - 34, 600, 30), "B — стройка", Hud.Small);
-            return;
-        }
+        if (!IsBuilding) return;
 
-        float y = 50;
-        GUI.Label(new Rect(12, y, 500, 30), "СТРОЙКА  (B — выйти)", Hud.Big);
-        y += 34;
+        // Список деталей слева
+        float y = 70;
+        GUI.Label(new Rect(12, y, 500, 30), "МОЛОТ — стройка", Hud.Big);
+        y += 32;
+        string lastCat = null;
         for (int i = 0; i < pieces.Count; i++)
         {
-            string line = (i < 9 ? (i + 1) + ". " : "   ") + pieces[i].displayName + "  (" + pieces[i].maxHealth + ")";
+            BuildPiece p = pieces[i];
+            if (p.category != lastCat)
+            {
+                lastCat = p.category;
+                GUI.Label(new Rect(16, y, 300, 22), "— " + p.category + " —", Hud.Small);
+                y += 20;
+            }
+            int have = inventory != null ? inventory.PieceCount(p.pieceId) : 0;
+            string line = (i == selected ? "> " : "   ") + p.displayName + "   " + (have > 0 ? "в руках: " + have : p.CostText);
             Color old = GUI.color;
-            GUI.color = i == selected ? Color.yellow : new Color(1f, 1f, 1f, 0.75f);
-            GUI.Label(new Rect(16, y, 500, 24), (i == selected ? "> " : "  ") + line, Hud.Small);
+            GUI.color = i == selected ? Color.yellow : new Color(1f, 1f, 1f, 0.7f);
+            GUI.Label(new Rect(16, y, 600, 22), line, Hud.Small);
             GUI.color = old;
-            y += 22;
+            y += 19;
         }
-        y += 10;
-        GUI.Label(new Rect(16, y, 700, 24), "ЛКМ — поставить   R — повернуть   Q/E — выбрать   X — снести", Hud.Small);
+        y += 8;
+        GUI.Label(new Rect(16, y, 900, 22), "Q/E — выбрать   R — повернуть   ЛКМ — поставить", Hud.Small);
+        GUI.Label(new Rect(16, y + 20, 900, 22), "ПКМ (держать) — разобрать   F — взять в руки", Hud.Small);
+
+        // Что под прицелом
+        if (looked != null)
+        {
+            Rect r = new Rect(Screen.width / 2f - 120, Screen.height / 2f + 40, 240, 12);
+            Hud.Bar(r, dismantleProgress, new Color(1f, 0.7f, 0.2f),
+                    looked.displayName + "  —  ПКМ держать: разобрать,  F: взять");
+        }
+
+        if (Time.time < messageUntil)
+            GUI.Label(new Rect(Screen.width / 2f - 200, Screen.height / 2f - 70, 600, 30), message, Hud.Big);
     }
 }

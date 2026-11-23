@@ -22,8 +22,11 @@ public static class EirionSceneBuilder
     // Материалы
     static Material grass, wood, darkWood, stone, roof, leaves, playerMat, crystal, dark, steel, ghost;
 
-    // Детали
-    static BuildPiece pWall, pGate, pStoneWall, pFloor, pStairs, pPillar, pBarricade, pTower, pHouse;
+    // Детали конструктора
+    static BuildPiece pPalisade, pPalisadeGate, pPlank, pPlankHalf, pPlankWindow, pPlankDoor,
+                      pFloor, pStairs, pPillar, pRoof, pGable, pBarricade,
+                      pStone, pStoneHalf, pStoneSlit, pStoneArch, pTower;
+    static List<BuildPiece> catalog;
 
     [MenuItem("Eirion/Создать сцену форта")]
     public static void CreateFortScene()
@@ -88,82 +91,150 @@ public static class EirionSceneBuilder
     {
         if (!AssetDatabase.IsValidFolder("Assets/Prefabs")) AssetDatabase.CreateFolder("Assets", "Prefabs");
         if (!AssetDatabase.IsValidFolder(PrefabFolder)) AssetDatabase.CreateFolder("Assets/Prefabs", "Building");
+        catalog = new List<BuildPiece>();
+        GameObject go;
 
-        // 1. Частокол 4 x 4 м из брёвен
+        // ---------- ДЕРЕВО ----------
+        // Частокол 4 x 4 м из брёвен
+        go = new GameObject("WoodPalisade");
+        for (int i = 0; i < 8; i++)
         {
-            GameObject go = new GameObject("WoodWall");
-            for (int i = 0; i < 8; i++)
-            {
-                float h = 4f + ((i * 7) % 3) * 0.15f;
-                Part(go.transform, PrimitiveType.Cylinder, new Vector3(-1.75f + i * 0.5f, h / 2f, 0f), new Vector3(0.5f, h / 2f, 0.5f), wood, Vector3.zero, false);
-            }
-            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 2.8f, -0.3f), new Vector3(4f, 0.25f, 0.15f), darkWood, Vector3.zero, false);
-            BoxCollider bc = go.AddComponent<BoxCollider>();
-            bc.center = new Vector3(0f, 2f, 0f);
-            bc.size = new Vector3(4f, 4f, 0.5f);
-            pWall = SavePiece(go, "Частокол", 300f, new Vector3(4f, 4f, 0.5f), true);
+            float h = 4f + ((i * 7) % 3) * 0.15f;
+            Part(go.transform, PrimitiveType.Cylinder, new Vector3(-1.75f + i * 0.5f, h / 2f, 0f), new Vector3(0.5f, h / 2f, 0.5f), wood, Vector3.zero, false);
         }
-        // 2. Ворота (проход 2.4 x 3.3 м)
-        {
-            GameObject go = new GameObject("WoodGate");
-            Part(go.transform, PrimitiveType.Cube, new Vector3(-1.6f, 2.25f, 0f), new Vector3(0.8f, 4.5f, 0.8f), darkWood);
-            Part(go.transform, PrimitiveType.Cube, new Vector3(1.6f, 2.25f, 0f), new Vector3(0.8f, 4.5f, 0.8f), darkWood);
-            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 3.9f, 0f), new Vector3(2.4f, 1.2f, 0.6f), wood);
-            pGate = SavePiece(go, "Ворота", 450f, new Vector3(4f, 4.5f, 0.8f), true);
-        }
-        // 3. Каменная стена 4 x 4 м с зубцами
-        {
-            GameObject go = new GameObject("StoneWall");
-            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 2f, 0f), new Vector3(4f, 4f, 1f), stone);
-            Part(go.transform, PrimitiveType.Cube, new Vector3(-1.25f, 4.3f, 0f), new Vector3(1f, 0.6f, 1f), stone);
-            Part(go.transform, PrimitiveType.Cube, new Vector3(1.25f, 4.3f, 0f), new Vector3(1f, 0.6f, 1f), stone);
-            pStoneWall = SavePiece(go, "Каменная стена", 900f, new Vector3(4f, 4.6f, 1f), true);
-        }
-        // 4. Помост / пол 4 x 4 м
-        {
-            GameObject go = new GameObject("WoodFloor");
-            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 0.15f, 0f), new Vector3(4f, 0.3f, 4f), wood);
-            pFloor = SavePiece(go, "Помост", 200f, new Vector3(4f, 0.3f, 4f), true);
-        }
-        // 5. Лестница: поднимает на 3 м на длине 4 м
-        {
-            GameObject go = new GameObject("WoodStairs");
-            float angle = Mathf.Atan2(3f, 4f) * Mathf.Rad2Deg;
-            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1.5f, 0f), new Vector3(2f, 0.3f, 5f), wood, new Vector3(-angle, 0f, 0f));
-            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1.5f, 1.9f), new Vector3(1.8f, 3f, 0.2f), darkWood, Vector3.zero, false);
-            pStairs = SavePiece(go, "Лестница", 200f, new Vector3(2f, 3f, 4f), true);
-        }
-        // 6. Столб-опора 3 м
-        {
-            GameObject go = new GameObject("WoodPillar");
-            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1.5f, 0f), new Vector3(0.5f, 3f, 0.5f), darkWood);
-            pPillar = SavePiece(go, "Столб", 150f, new Vector3(0.5f, 3f, 0.5f), true);
-        }
-        // 7. Баррикада с кольями
-        {
-            GameObject go = new GameObject("Barricade");
-            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 0.25f, 0f), new Vector3(4f, 0.5f, 0.5f), darkWood);
-            for (int i = 0; i < 5; i++)
-                Part(go.transform, PrimitiveType.Cube, new Vector3(-1.6f + i * 0.8f, 0.8f, 0.3f), new Vector3(0.15f, 0.15f, 2f), wood, new Vector3(-40f, 0f, 0f));
-            pBarricade = SavePiece(go, "Баррикада", 150f, new Vector3(4f, 1.5f, 1.5f), true);
-        }
-        // 8. Каменная башня 4 x 4 x 8 м
-        {
-            GameObject go = new GameObject("StoneTower");
-            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 4f, 0f), new Vector3(4f, 8f, 4f), stone);
-            foreach (float x in new[] { -1.5f, 1.5f })
-                foreach (float z in new[] { -1.5f, 1.5f })
-                    Part(go.transform, PrimitiveType.Cube, new Vector3(x, 8.35f, z), new Vector3(1f, 0.7f, 1f), stone);
-            pTower = SavePiece(go, "Башня", 1500f, new Vector3(4f, 8.7f, 4f), true);
-        }
-        // 9. Дом (для деревни и казарм; в меню стройки пока нет)
-        {
-            GameObject go = new GameObject("House");
-            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1.5f, 0f), new Vector3(5f, 3f, 6f), wood);
-            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 3.2f, 0f), new Vector3(3.9f, 3.9f, 6.4f), roof, new Vector3(0f, 0f, 45f));
-            Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1f, -3.01f), new Vector3(1.2f, 2f, 0.1f), darkWood, Vector3.zero, false);
-            pHouse = SavePiece(go, "Дом", 600f, new Vector3(5f, 6f, 6.4f), false);
-        }
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 2.8f, -0.3f), new Vector3(4f, 0.25f, 0.15f), darkWood, Vector3.zero, false);
+        RootBox(go, new Vector3(0f, 2f, 0f), new Vector3(4f, 4f, 0.5f));
+        pPalisade = SavePiece(go, "Частокол", "Дерево", 300f, new Vector3(4f, 4f, 0.5f), 4, 0);
+
+        // Ворота частокола (проход 2.4 x 3.3 м)
+        go = new GameObject("WoodPalisadeGate");
+        Part(go.transform, PrimitiveType.Cube, new Vector3(-1.6f, 2.25f, 0f), new Vector3(0.8f, 4.5f, 0.8f), darkWood);
+        Part(go.transform, PrimitiveType.Cube, new Vector3(1.6f, 2.25f, 0f), new Vector3(0.8f, 4.5f, 0.8f), darkWood);
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 3.9f, 0f), new Vector3(2.4f, 1.2f, 0.6f), wood);
+        pPalisadeGate = SavePiece(go, "Ворота частокола", "Дерево", 450f, new Vector3(4f, 4.5f, 0.8f), 6, 0);
+
+        // Стена из досок 4 x 3 м
+        go = new GameObject("PlankWall");
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1.5f, 0f), new Vector3(4f, 3f, 0.3f), wood);
+        Frame(go, 3f);
+        pPlank = SavePiece(go, "Стена из досок", "Дерево", 250f, new Vector3(4f, 3f, 0.3f), 3, 0);
+
+        // Полустена 4 x 1.5 м
+        go = new GameObject("PlankWallHalf");
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 0.75f, 0f), new Vector3(4f, 1.5f, 0.3f), wood);
+        Frame(go, 1.5f);
+        pPlankHalf = SavePiece(go, "Полустена", "Дерево", 150f, new Vector3(4f, 1.5f, 0.3f), 2, 0);
+
+        // Стена с окном (окно 1.2 x 1 м)
+        go = new GameObject("PlankWallWindow");
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 0.6f, 0f), new Vector3(4f, 1.2f, 0.3f), wood);
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 2.6f, 0f), new Vector3(4f, 0.8f, 0.3f), wood);
+        Part(go.transform, PrimitiveType.Cube, new Vector3(-1.3f, 1.7f, 0f), new Vector3(1.4f, 1f, 0.3f), wood);
+        Part(go.transform, PrimitiveType.Cube, new Vector3(1.3f, 1.7f, 0f), new Vector3(1.4f, 1f, 0.3f), wood);
+        Frame(go, 3f);
+        pPlankWindow = SavePiece(go, "Стена с окном", "Дерево", 220f, new Vector3(4f, 3f, 0.3f), 3, 0);
+
+        // Стена с дверным проёмом (1.4 x 2.2 м)
+        go = new GameObject("PlankWallDoor");
+        Part(go.transform, PrimitiveType.Cube, new Vector3(-1.35f, 1.5f, 0f), new Vector3(1.3f, 3f, 0.3f), wood);
+        Part(go.transform, PrimitiveType.Cube, new Vector3(1.35f, 1.5f, 0f), new Vector3(1.3f, 3f, 0.3f), wood);
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 2.6f, 0f), new Vector3(1.4f, 0.8f, 0.3f), wood);
+        Frame(go, 3f);
+        pPlankDoor = SavePiece(go, "Стена с дверью", "Дерево", 220f, new Vector3(4f, 3f, 0.3f), 3, 0);
+
+        // Пол / помост 4 x 4 м
+        go = new GameObject("WoodFloor");
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 0.15f, 0f), new Vector3(4f, 0.3f, 4f), wood);
+        pFloor = SavePiece(go, "Пол / помост", "Дерево", 200f, new Vector3(4f, 0.3f, 4f), 3, 0);
+
+        // Лестница: +3 м на длине 4 м
+        go = new GameObject("WoodStairs");
+        float sa = Mathf.Atan2(3f, 4f) * Mathf.Rad2Deg;
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1.5f, 0f), new Vector3(2f, 0.3f, 5f), wood, new Vector3(-sa, 0f, 0f));
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1.5f, 1.9f), new Vector3(1.8f, 3f, 0.2f), darkWood, Vector3.zero, false);
+        pStairs = SavePiece(go, "Лестница", "Дерево", 200f, new Vector3(2f, 3f, 4f), 3, 0);
+
+        // Столб 3 м
+        go = new GameObject("WoodPillar");
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1.5f, 0f), new Vector3(0.5f, 3f, 0.5f), darkWood);
+        pPillar = SavePiece(go, "Столб", "Дерево", 150f, new Vector3(0.5f, 3f, 0.5f), 1, 0);
+
+        // Скат крыши: 4 м в ширину, поднимается на 2 м на длине 2 м (45°)
+        go = new GameObject("WoodRoof");
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1f, 0f), new Vector3(4.2f, 0.15f, 2.95f), roof, new Vector3(-45f, 0f, 0f));
+        pRoof = SavePiece(go, "Скат крыши", "Дерево", 150f, new Vector3(4f, 2f, 2f), 2, 0);
+
+        // Фронтон — треугольник под крышей, 4 x 2 м
+        go = new GameObject("WoodGable");
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 0.335f, 0f), new Vector3(4f, 0.67f, 0.3f), wood);
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1.0f, 0f), new Vector3(2.67f, 0.67f, 0.3f), wood);
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1.665f, 0f), new Vector3(1.33f, 0.67f, 0.3f), wood);
+        pGable = SavePiece(go, "Фронтон", "Дерево", 120f, new Vector3(4f, 2f, 0.3f), 2, 0);
+
+        // Баррикада с кольями
+        go = new GameObject("Barricade");
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 0.25f, 0f), new Vector3(4f, 0.5f, 0.5f), darkWood);
+        for (int i = 0; i < 5; i++)
+            Part(go.transform, PrimitiveType.Cube, new Vector3(-1.6f + i * 0.8f, 0.8f, 0.3f), new Vector3(0.15f, 0.15f, 2f), wood, new Vector3(-40f, 0f, 0f));
+        pBarricade = SavePiece(go, "Баррикада", "Дерево", 150f, new Vector3(4f, 1.5f, 1.5f), 3, 0);
+
+        // ---------- КАМЕНЬ ----------
+        // Каменная стена 4 x 4 м с зубцами
+        go = new GameObject("StoneWall");
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 2f, 0f), new Vector3(4f, 4f, 1f), stone);
+        Crenels(go, 4f);
+        pStone = SavePiece(go, "Каменная стена", "Камень", 900f, new Vector3(4f, 4.6f, 1f), 0, 6);
+
+        // Каменная полустена 4 x 2 м
+        go = new GameObject("StoneWallHalf");
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 1f, 0f), new Vector3(4f, 2f, 1f), stone);
+        pStoneHalf = SavePiece(go, "Каменная полустена", "Камень", 500f, new Vector3(4f, 2f, 1f), 0, 3);
+
+        // Стена с бойницей (узкая щель для лука)
+        go = new GameObject("StoneWallSlit");
+        Part(go.transform, PrimitiveType.Cube, new Vector3(-1.1f, 2f, 0f), new Vector3(1.8f, 4f, 1f), stone);
+        Part(go.transform, PrimitiveType.Cube, new Vector3(1.1f, 2f, 0f), new Vector3(1.8f, 4f, 1f), stone);
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 0.6f, 0f), new Vector3(0.4f, 1.2f, 1f), stone);
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 3.4f, 0f), new Vector3(0.4f, 1.2f, 1f), stone);
+        Crenels(go, 4f);
+        pStoneSlit = SavePiece(go, "Стена с бойницей", "Камень", 850f, new Vector3(4f, 4.6f, 1f), 0, 6);
+
+        // Каменная арка (проход 2 x 3 м)
+        go = new GameObject("StoneArch");
+        Part(go.transform, PrimitiveType.Cube, new Vector3(-1.5f, 2f, 0f), new Vector3(1f, 4f, 1f), stone);
+        Part(go.transform, PrimitiveType.Cube, new Vector3(1.5f, 2f, 0f), new Vector3(1f, 4f, 1f), stone);
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 3.5f, 0f), new Vector3(2f, 1f, 1f), stone);
+        Crenels(go, 4f);
+        pStoneArch = SavePiece(go, "Каменная арка", "Камень", 800f, new Vector3(4f, 4.6f, 1f), 0, 6);
+
+        // Башня 4 x 4 x 8 м
+        go = new GameObject("StoneTower");
+        Part(go.transform, PrimitiveType.Cube, new Vector3(0f, 4f, 0f), new Vector3(4f, 8f, 4f), stone);
+        foreach (float x in new[] { -1.5f, 1.5f })
+            foreach (float z in new[] { -1.5f, 1.5f })
+                Part(go.transform, PrimitiveType.Cube, new Vector3(x, 8.35f, z), new Vector3(1f, 0.7f, 1f), stone);
+        pTower = SavePiece(go, "Башня", "Камень", 1500f, new Vector3(4f, 8.7f, 4f), 4, 20);
+    }
+
+    // Тёмные столбики по краям деревянной стены — «рамка»
+    static void Frame(GameObject go, float height)
+    {
+        Part(go.transform, PrimitiveType.Cube, new Vector3(-1.9f, height / 2f, 0f), new Vector3(0.25f, height, 0.4f), darkWood, Vector3.zero, false);
+        Part(go.transform, PrimitiveType.Cube, new Vector3(1.9f, height / 2f, 0f), new Vector3(0.25f, height, 0.4f), darkWood, Vector3.zero, false);
+    }
+
+    // Зубцы сверху каменной стены
+    static void Crenels(GameObject go, float top)
+    {
+        Part(go.transform, PrimitiveType.Cube, new Vector3(-1.25f, top + 0.3f, 0f), new Vector3(1f, 0.6f, 1f), stone);
+        Part(go.transform, PrimitiveType.Cube, new Vector3(1.25f, top + 0.3f, 0f), new Vector3(1f, 0.6f, 1f), stone);
+    }
+
+    static void RootBox(GameObject go, Vector3 center, Vector3 size)
+    {
+        BoxCollider bc = go.AddComponent<BoxCollider>();
+        bc.center = center;
+        bc.size = size;
     }
 
     static GameObject Part(Transform parent, PrimitiveType type, Vector3 pos, Vector3 scale, Material mat, Vector3 euler = default, bool collider = true)
@@ -178,16 +249,21 @@ public static class EirionSceneBuilder
         return p;
     }
 
-    static BuildPiece SavePiece(GameObject go, string displayName, float hp, Vector3 size, bool buildable)
+    static BuildPiece SavePiece(GameObject go, string displayName, string category, float hp, Vector3 size, int wood, int stone)
     {
         BuildPiece bp = go.AddComponent<BuildPiece>();
+        bp.pieceId = go.name;
         bp.displayName = displayName;
+        bp.category = category;
         bp.maxHealth = hp;
         bp.size = size;
-        bp.buildable = buildable;
+        bp.costWood = wood;
+        bp.costStone = stone;
         GameObject prefab = PrefabUtility.SaveAsPrefabAsset(go, PrefabFolder + "/" + go.name + ".prefab");
         Object.DestroyImmediate(go);
-        return prefab.GetComponent<BuildPiece>();
+        BuildPiece result = prefab.GetComponent<BuildPiece>();
+        catalog.Add(result);
+        return result;
     }
 
     // Поставить деталь в сцену (связанную с префабом)
@@ -199,63 +275,93 @@ public static class EirionSceneBuilder
         return go.GetComponent<BuildPiece>();
     }
 
+    // Поставить деталь относительно «начала» дома, повёрнутого на houseYaw
+    static void PutLocal(BuildPiece prefab, Vector3 origin, float houseYaw, float lx, float ly, float lz, float localYaw)
+    {
+        Vector3 p = origin + Quaternion.Euler(0f, houseYaw, 0f) * new Vector3(lx, ly, lz);
+        Put(prefab, p.x, p.y, p.z, houseYaw + localYaw);
+    }
+
+    // Дом 8 x 4 м, собранный из деталей конструктора
+    static void BuildHouse(float x, float z, float yaw)
+    {
+        Transform keep = root;
+        root = new GameObject("House").transform;
+        root.SetParent(keep, false);
+        Vector3 o = new Vector3(x, 0f, z);
+        PutLocal(pPlankDoor,   o, yaw, -2f, 0f, -2f, 0f);   // перед: дверь
+        PutLocal(pPlankWindow, o, yaw,  2f, 0f, -2f, 0f);   // перед: окно
+        PutLocal(pPlankWindow, o, yaw, -2f, 0f,  2f, 0f);   // зад: окно
+        PutLocal(pPlank,       o, yaw,  2f, 0f,  2f, 0f);   // зад: стена
+        PutLocal(pPlank,       o, yaw, -4f, 0f,  0f, 90f);  // бока
+        PutLocal(pPlank,       o, yaw,  4f, 0f,  0f, 90f);
+        PutLocal(pRoof,        o, yaw, -2f, 3f, -1f, 0f);   // крыша: два ската с каждой стороны
+        PutLocal(pRoof,        o, yaw,  2f, 3f, -1f, 0f);
+        PutLocal(pRoof,        o, yaw, -2f, 3f,  1f, 180f);
+        PutLocal(pRoof,        o, yaw,  2f, 3f,  1f, 180f);
+        PutLocal(pGable,       o, yaw, -4f, 3f,  0f, 90f);  // фронтоны
+        PutLocal(pGable,       o, yaw,  4f, 3f,  0f, 90f);
+        root = keep;
+    }
+
     // ================= Форт =================
     static void BuildFort()
     {
         root = new GameObject("Fort").transform;
         float h = FortHalf;
 
-        // Стены: по 13 деталей с каждой стороны, ворота на севере и юге посередине
         for (int i = -6; i <= 6; i++)
         {
             float c = i * 4f;
-            Put(i == 0 ? pGate : pWall, c, 0f, h, 0f);    // север
-            Put(i == 0 ? pGate : pWall, c, 0f, -h, 180f); // юг
-            Put(pWall, -h, 0f, c, 90f);                    // запад
-            Put(pWall, h, 0f, c, 90f);                     // восток
+            // Север (к тьме) — камень: стены, бойницы, арка-ворота
+            Put(i == 0 ? pStoneArch : (Mathf.Abs(i) % 2 == 1 ? pStoneSlit : pStone), c, 0f, h, 0f);
+            // Юг (к деревне), запад, восток — частокол
+            Put(i == 0 ? pPalisadeGate : pPalisade, c, 0f, -h, 180f);
+            Put(pPalisade, -h, 0f, c, 90f);
+            Put(pPalisade, h, 0f, c, 90f);
         }
 
-        // Башни по углам и у северных ворот (север — опасная сторона)
+        // Башни: по углам и у северных ворот
         foreach (float x in new[] { -h, h })
             foreach (float z in new[] { -h, h })
                 Put(pTower, x, 0f, z, 0f);
-        Put(pTower, -6f, 0f, h + 2.4f, 0f);
-        Put(pTower, 6f, 0f, h + 2.4f, 0f);
+        Put(pTower, -6f, 0f, h + 2.5f, 0f);
+        Put(pTower, 6f, 0f, h + 2.5f, 0f);
 
-        // Помосты вдоль стен (на них стоят защитники)
+        // Помосты вдоль стен
+        float innerN = h - 0.5f - 2f;   // каменная стена толще
         float inner = h - 0.25f - 2f;
         for (int i = -5; i <= 5; i++)
         {
             float c = i * 4f;
             if (i != 0)
             {
-                Put(pFloor, c, FloorY, inner, 0f);
+                Put(pFloor, c, FloorY, innerN, 0f);
                 Put(pFloor, c, FloorY, -inner, 0f);
             }
             Put(pFloor, -inner, FloorY, c, 0f);
             Put(pFloor, inner, FloorY, c, 0f);
         }
 
-        // Лестницы на помосты (по одной у каждой стены)
-        Put(pStairs, -10f, 0f, inner - 4f, 0f);
+        // Лестницы на помосты
+        Put(pStairs, -10f, 0f, innerN - 4f, 0f);
         Put(pStairs, 10f, 0f, -inner + 4f, 180f);
-        Put(pStairs, inner - 4f, 0f, 10f, 90f);
-        Put(pStairs, -inner + 4f, 0f, 8f, 270f);
+        Put(pStairs, inner - 4f, 0f, 16f, 90f);
+        Put(pStairs, -inner + 4f, 0f, 16f, 270f);
 
-        // Внутренний двор: казармы, склад, кузница
-        Put(pHouse, -16f, 0f, -12f, 90f);
-        Put(pHouse, -16f, 0f, 0f, 90f);
-        Put(pHouse, 16f, 0f, -12f, -90f);
-        Put(pHouse, 16f, 0f, 6f, -90f);
+        // Казармы и склад во дворе — тоже из деталей
+        BuildHouse(-17f, -8f, 90f);
+        BuildHouse(-17f, 4f, 90f);
+        BuildHouse(17f, -8f, 90f);
+        BuildHouse(17f, 4f, 90f);
 
-        // Внутренняя линия обороны у северных ворот
+        // Баррикады у северных ворот изнутри и колья снаружи
         Put(pBarricade, -6f, 0f, 14f, 0f);
         Put(pBarricade, 6f, 0f, 14f, 0f);
-        // Колья снаружи перед северными воротами
         for (int i = -2; i <= 2; i++)
-            Put(pBarricade, i * 5f, 0f, h + 9f + Mathf.Abs(i) * -1.5f, 0f);
+            Put(pBarricade, i * 5f, 0f, h + 9f - Mathf.Abs(i) * 1.5f, 0f);
 
-        // Декор (не ломается): кристалл лайлилиума, костёр, ящики
+        // Декор (не разбирается): кристалл лайлилиума, костёр, ящики
         root = new GameObject("Fort_Decor").transform;
         GameObject cr = Box("Lailillium_Crystal", new Vector3(0f, 1.4f, -4f), new Vector3(1f, 2.8f, 1f), crystal);
         cr.transform.rotation = Quaternion.Euler(0f, 45f, 8f);
@@ -268,23 +374,21 @@ public static class EirionSceneBuilder
 
         Box("Campfire", new Vector3(-6f, 0.25f, -16f), new Vector3(1.4f, 0.5f, 1.4f), stone);
         for (int i = 0; i < 6; i++)
-            Box("Crate", new Vector3(10f + (i % 3) * 1.1f, 0.5f + (i / 3) * 1f, -20f), Vector3.one, darkWood);
+            Box("Crate", new Vector3(-12f + (i % 3) * 1.1f, 0.5f + (i / 3) * 1f, -20f), Vector3.one, darkWood);
     }
 
     // ================= Деревня (юг) =================
     static void BuildVillage()
     {
         root = new GameObject("Village").transform;
-        Vector2[] spots =
+        Vector3[] spots =
         {
-            new Vector2(-18, -48), new Vector2(-6, -52), new Vector2(7, -47), new Vector2(20, -53),
-            new Vector2(-24, -64), new Vector2(-10, -68), new Vector2(4, -66), new Vector2(17, -70),
-            new Vector2(-4, -84), new Vector2(12, -86),
+            new Vector3(-20, -48, 0), new Vector3(-6, -50, 90), new Vector3(8, -47, 0), new Vector3(22, -52, 90),
+            new Vector3(-24, -66, 90), new Vector3(-10, -68, 0), new Vector3(5, -66, 0), new Vector3(19, -70, 90),
+            new Vector3(-4, -84, 0), new Vector3(12, -86, 0),
         };
-        for (int i = 0; i < spots.Length; i++)
-            Put(pHouse, spots[i].x, 0f, spots[i].y, (i * 37f) % 50f - 25f);
+        foreach (Vector3 s in spots) BuildHouse(s.x, s.y, s.z);
 
-        // Площадка для дирижабля
         root = new GameObject("Village_Decor").transform;
         GameObject pad = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
         pad.name = "Airship_LandingPad";
@@ -383,7 +487,7 @@ public static class EirionSceneBuilder
         pivot.AddComponent<PlayerCamera>();
         cam.gameObject.AddComponent<FpsCounter>();
 
-        // Меч (пока из кубиков) — в правой руке
+        // Меч и молот (пока из кубиков) — в правой руке
         GameObject sword = new GameObject("Sword");
         sword.transform.SetParent(pivot.transform, false);
         sword.transform.localPosition = new Vector3(0.45f, -0.35f, 0.55f);
@@ -391,15 +495,28 @@ public static class EirionSceneBuilder
         Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, 0.45f, 0f), new Vector3(0.06f, 0.8f, 0.02f), steel, Vector3.zero, false);
         Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, 0.04f, 0f), new Vector3(0.25f, 0.04f, 0.05f), darkWood, Vector3.zero, false);
         Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, -0.08f, 0f), new Vector3(0.04f, 0.2f, 0.04f), darkWood, Vector3.zero, false);
-        foreach (Renderer r in sword.GetComponentsInChildren<Renderer>())
-            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
-        PlayerCombat combat = player.AddComponent<PlayerCombat>();
-        combat.weapon = sword.transform;
+        GameObject hammer = new GameObject("Hammer");
+        hammer.transform.SetParent(pivot.transform, false);
+        hammer.transform.localPosition = new Vector3(0.45f, -0.4f, 0.55f);
+        hammer.transform.localRotation = Quaternion.Euler(50f, 0f, 0f);
+        Part(hammer.transform, PrimitiveType.Cube, new Vector3(0f, 0.2f, 0f), new Vector3(0.05f, 0.55f, 0.05f), darkWood, Vector3.zero, false);
+        Part(hammer.transform, PrimitiveType.Cube, new Vector3(0f, 0.5f, 0f), new Vector3(0.22f, 0.12f, 0.12f), steel, Vector3.zero, false);
+
+        foreach (GameObject tool in new[] { sword, hammer })
+            foreach (Renderer r in tool.GetComponentsInChildren<Renderer>())
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+
+        PlayerHotbar hotbar = player.AddComponent<PlayerHotbar>();
+        hotbar.swordModel = sword.transform;
+        hotbar.hammerModel = hammer.transform;
+
+        player.AddComponent<Inventory>();
+        player.AddComponent<PlayerCombat>();
 
         PlayerBuilder builder = player.AddComponent<PlayerBuilder>();
         builder.ghostMaterial = ghost;
-        builder.pieces = new List<BuildPiece> { pWall, pGate, pStoneWall, pFloor, pStairs, pPillar, pBarricade, pTower };
+        builder.pieces = new List<BuildPiece>(catalog);
     }
 
     // ================= Атмосфера =================

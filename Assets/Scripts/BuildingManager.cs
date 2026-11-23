@@ -1,10 +1,9 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-// Главный по постройкам. Через него идут ВСЕ изменения: поставить, ударить, снести.
-// Зачем так: когда добавим игру по сети, эти три метода станут «просьбами к хосту»,
-// и больше ничего переделывать не придётся.
-// Ещё он проверяет опору: если деталь ни через что не связана с землёй — она падает.
+// Главный по постройкам. ВСЕ изменения идут через него: поставить, разобрать, поднять, урон.
+// Когда добавим сеть, эти методы станут «просьбами к хосту» — остальное не придётся переделывать.
+// Ещё он проверяет опору: если деталь ни через что не связана с землёй — она рушится.
 public class BuildingManager : MonoBehaviour
 {
     public static BuildingManager Instance { get; private set; }
@@ -25,14 +24,30 @@ public class BuildingManager : MonoBehaviour
         return piece;
     }
 
+    // Разобрать: деталь рассыпается, выпадают ресурсы (dropFraction — какая часть стоимости)
+    public static void Dismantle(BuildPiece piece, float dropFraction = 1f)
+    {
+        if (piece == null || !piece.gameObject.activeSelf) return;
+        Vector3 c = piece.Center;
+        ResourcePickup.Spawn(ResourceType.Wood, Mathf.RoundToInt(piece.costWood * dropFraction), c);
+        ResourcePickup.Spawn(ResourceType.Stone, Mathf.RoundToInt(piece.costStone * dropFraction), c);
+        piece.Remove(true);
+        RequestStabilityCheck();
+    }
+
+    // Поднять целиком (в руки/инвентарь). Возвращает id детали
+    public static string PickUp(BuildPiece piece)
+    {
+        if (piece == null || !piece.gameObject.activeSelf) return null;
+        string id = piece.pieceId;
+        piece.Remove(false);
+        RequestStabilityCheck();
+        return id;
+    }
+
     public static void Damage(BuildPiece piece, float amount)
     {
         if (piece != null) piece.ApplyDamage(amount);
-    }
-
-    public static void Demolish(BuildPiece piece)
-    {
-        if (piece != null) piece.Break();
     }
 
     public static void RequestStabilityCheck()
@@ -47,7 +62,6 @@ public class BuildingManager : MonoBehaviour
         CheckStability();
     }
 
-    // Ищем все детали, связанные с землёй. Остальные — рушатся.
     void CheckStability()
     {
         Physics.SyncTransforms();
@@ -65,6 +79,7 @@ public class BuildingManager : MonoBehaviour
         foreach (BuildPiece p in BuildPiece.All)
             if (!supported.Contains(p)) falling.Add(p);
 
-        foreach (BuildPiece p in falling) p.Break();
+        // Рухнувшее отдаёт половину ресурсов
+        foreach (BuildPiece p in falling) Dismantle(p, 0.5f);
     }
 }

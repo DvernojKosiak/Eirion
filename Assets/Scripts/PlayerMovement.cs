@@ -14,6 +14,9 @@ public class PlayerMovement : MonoBehaviour
     public float jumpHeight = 1.2f;  // высота прыжка в метрах
     public float gravity = -20f;     // сила притяжения вниз
 
+    [Header("Пинать предметы")]
+    public float pushPower = 2f;     // с какой силой толкаем обломки и ресурсы
+
     CharacterController controller;
     float verticalVelocity;          // скорость вверх/вниз
 
@@ -51,5 +54,16 @@ public class PlayerMovement : MonoBehaviour
         // 4. Двигаем героя
         Vector3 velocity = move * speed + Vector3.up * verticalVelocity;
         controller.Move(velocity * Time.deltaTime);
+    }
+
+    // Unity вызывает это, когда герой во что-то врезается при движении.
+    // Если это предмет с физикой (обломок, ресурс) — толкаем его.
+    void OnControllerColliderHit(ControllerColliderHit hit)
+    {
+        Rigidbody rb = hit.collider.attachedRigidbody;
+        if (rb == null || rb.isKinematic) return;
+        if (hit.moveDirection.y < -0.3f) return; // стоим сверху — не толкаем
+        Vector3 dir = new Vector3(hit.moveDirection.x, 0.2f, hit.moveDirection.z);
+        rb.AddForceAtPosition(dir * pushPower, hit.point, ForceMode.Impulse);
     }
 }

@@ -32,6 +32,8 @@ public static class EirionSceneBuilder
     static List<BuildPiece> catalog;
     static int sceneIdCounter;
     static int nodeIdCounter;
+    static bool markVillage; // детали, которые ставим сейчас, — часть деревни
+    static Material torchFlame;
 
     [MenuItem("Eirion/Создать сцену форта")]
     public static void CreateFortScene()
@@ -56,6 +58,8 @@ public static class EirionSceneBuilder
 
         sceneIdCounter = 0;
         nodeIdCounter = 0;
+        markVillage = false;
+        torchFlame = Mat("TorchFlame", new Color(1f, 0.6f, 0.2f), new Color(1f, 0.5f, 0.15f) * 4f);
         BuildFort();
         BuildVillage();
         BuildForest();
@@ -281,6 +285,7 @@ public static class EirionSceneBuilder
         go.transform.SetPositionAndRotation(new Vector3(x, y, z), Quaternion.Euler(0f, yaw, 0f));
         BuildPiece bp = go.GetComponent<BuildPiece>();
         bp.netId = ++sceneIdCounter; // номер детали — одинаковый у всех игроков
+        if (markVillage) { bp.village = true; bp.locked = true; }
         PrefabUtility.RecordPrefabInstancePropertyModifications(bp);
         return bp;
     }
@@ -383,8 +388,41 @@ public static class EirionSceneBuilder
         l.type = LightType.Point; l.color = new Color(0.65f, 0.4f, 1f); l.range = 12f; l.intensity = 4f;
 
         Box("Campfire", new Vector3(-6f, 0.25f, -16f), new Vector3(1.4f, 0.5f, 1.4f), stone);
+        MakeTorch(new Vector3(-6f, -1.6f, -16f)); // огонь костра
+
+        // Факелы во дворе форта
+        foreach (Vector3 t in new[]
+        {
+            new Vector3(-8f, 0f, 18f), new Vector3(8f, 0f, 18f), new Vector3(-12f, 0f, 0f), new Vector3(12f, 0f, 0f),
+            new Vector3(-8f, 0f, -18f), new Vector3(8f, 0f, -18f), new Vector3(-4f, 0f, 22f), new Vector3(4f, 0f, 22f),
+        })
+            MakeTorch(t);
         for (int i = 0; i < 6; i++)
             Box("Crate", new Vector3(-12f + (i % 3) * 1.1f, 0.5f + (i / 3) * 1f, -20f), Vector3.one, darkWood);
+    }
+
+    // Факел: столб + огонёк + свет (горит ночью)
+    static void MakeTorch(Vector3 pos)
+    {
+        GameObject t = new GameObject("Torch");
+        t.transform.SetParent(root, false);
+        t.transform.position = pos;
+        if (pos.y > -1f)
+            Part(t.transform, PrimitiveType.Cube, new Vector3(0f, 1f, 0f), new Vector3(0.15f, 2f, 0.15f), darkWood, Vector3.zero, false);
+        GameObject flame = Part(t.transform, PrimitiveType.Cube, new Vector3(0f, 2.1f, 0f), new Vector3(0.22f, 0.3f, 0.22f), torchFlame, new Vector3(0f, 45f, 0f), false);
+        flame.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        GameObject lg = new GameObject("Light");
+        lg.transform.SetParent(t.transform, false);
+        lg.transform.localPosition = new Vector3(0f, 2.3f, 0f);
+        Light l = lg.AddComponent<Light>();
+        l.type = LightType.Point;
+        l.color = new Color(1f, 0.62f, 0.3f);
+        l.range = 11f;
+        l.intensity = 2.5f;
+        l.shadows = LightShadows.None;
+        Torch torch = t.AddComponent<Torch>();
+        torch.torchLight = l;
+        torch.flame = flame.GetComponent<Renderer>();
     }
 
     // ================= Деревня (юг) =================
@@ -397,7 +435,12 @@ public static class EirionSceneBuilder
             new Vector3(-24, -66, 90), new Vector3(-10, -68, 0), new Vector3(5, -66, 0), new Vector3(19, -70, 90),
             new Vector3(-4, -84, 0), new Vector3(12, -86, 0),
         };
+        markVillage = true;
         foreach (Vector3 s in spots) BuildHouse(s.x, s.y, s.z);
+        markVillage = false;
+
+        // Факелы в деревне
+        foreach (Vector3 s in spots) MakeTorch(new Vector3(s.x + 3f, 0f, s.y - 4f));
 
         root = new GameObject("Village_Decor").transform;
         GameObject pad = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
@@ -609,9 +652,10 @@ public static class EirionSceneBuilder
         PlayerBuilder builder = player.AddComponent<PlayerBuilder>();
         builder.ghostMaterial = ghost;
         builder.pieces = new List<BuildPiece>(catalog);
+        PlayerHealth health = player.AddComponent<PlayerHealth>();
 
         // Управление работает только у своего игрока — включит NetworkPlayer
-        Behaviour[] ownerOnly = { movement, pcam, hotbar, inventory, combat, builder };
+        Behaviour[] ownerOnly = { movement, pcam, hotbar, inventory, combat, builder, health };
         foreach (Behaviour b in ownerOnly) b.enabled = false;
 
         NetworkPlayer np = player.AddComponent<NetworkPlayer>();
@@ -637,10 +681,31 @@ public static class EirionSceneBuilder
         nm.NetworkConfig.EnableSceneManagement = false; // у всех одна и та же сцена форта
         netGo.AddComponent<NetworkMenu>();
 
+        // Менеджеры — обычные объекты (без NetworkObject): по сети они общаются сообщениями
         GameObject manager = new GameObject("BuildingManager");
-        manager.AddComponent<NetworkObject>();
         BuildingManager bm = manager.AddComponent<BuildingManager>();
         bm.catalog = new List<BuildPiece>(catalog);
+
+        // Ход игры: день/ночь, деревня, поражение
+        GameObject dirGo = new GameObject("GameDirector");
+        GameDirector gd = dirGo.AddComponent<GameDirector>();
+        Light sunLight = null;
+        foreach (Light l in Object.FindObjectsByType<Light>(FindObjectsSortMode.None))
+            if (l.type == LightType.Directional) { sunLight = l; break; }
+        gd.sun = sunLight;
+        GameObject moonGo = new GameObject("Moon");
+        moonGo.transform.rotation = Quaternion.Euler(50f, 140f, 0f);
+        Light moon = moonGo.AddComponent<Light>();
+        moon.type = LightType.Directional;
+        moon.color = new Color(0.55f, 0.65f, 1f);
+        moon.intensity = 0f;
+        moon.shadows = LightShadows.None;
+        gd.moon = moon;
+
+        GameObject enemiesGo = new GameObject("EnemyManager");
+        EnemyManager em = enemiesGo.AddComponent<EnemyManager>();
+        em.bodyMaterial = Mat("EnemyBody", new Color(0.16f, 0.1f, 0.2f));
+        em.eyeMaterial = Mat("EnemyEyes", new Color(1f, 0.2f, 0.1f), new Color(1f, 0.15f, 0.05f) * 4f);
     }
 
     // Чтобы можно было запустить две копии игры на одном компе и проверить сеть

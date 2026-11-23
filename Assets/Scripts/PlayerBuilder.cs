@@ -91,6 +91,11 @@ public class PlayerBuilder : MonoBehaviour
 
         bool locked = Cursor.lockState == CursorLockMode.Locked;
         looked = AimHelper.LookedPiece(cam, transform, reach);
+        if (looked != null && looked.locked)
+        {
+            if ((mouse.rightButton.wasPressedThisFrame || kb.fKey.wasPressedThisFrame) && locked) Say("Это деревня — её разбирать нельзя, её надо защищать!");
+            looked = null;
+        }
 
         // --- Разобрать: держим ПКМ ---
         if (locked && mouse.rightButton.isPressed && looked != null)

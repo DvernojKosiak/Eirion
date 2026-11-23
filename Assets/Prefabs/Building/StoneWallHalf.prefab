@@ -46,6 +46,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BuildPiece
   pieceId: StoneWallHalf
+  netId: 0
   displayName: "\u041A\u0430\u043C\u0435\u043D\u043D\u0430\u044F \u043F\u043E\u043B\u0443\u0441\u0442\u0435\u043D\u0430"
   category: "\u041A\u0430\u043C\u0435\u043D\u044C"
   maxHealth: 500

@@ -2,14 +2,14 @@ using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 
-// Главный по постройкам. ВСЕ изменения идут через него: поставить, разобрать, взять в руки, урон.
+// Главный по постройкам и ресурсам мира. ВСЕ изменения идут через него:
+// поставить, разобрать, взять в руки, урон, удар по дереву/камню.
 //
-// Как это работает в сетевой игре:
-//   игрок просит  ->  хост проверяет и делает  ->  хост рассылает всем, и у всех происходит то же самое.
-// У каждой детали есть номер (netId), одинаковый у всех игроков, — по нему понимаем, о какой детали речь.
-// Кто зашёл позже — получает от хоста список: какие детали уже снесли и какие поставили.
+// Сеть: игрок просит -> хост делает -> хост рассылает всем, и у всех происходит то же самое.
+// У каждой детали и каждого дерева/камня есть номер (netId), одинаковый у всех игроков.
+// Кто зашёл позже — получает от хоста список изменений.
 // Ещё хост проверяет опору: если деталь ни через что не связана с землёй — она рушится.
-public class BuildingManager : NetworkBehaviour
+public class BuildingManager : MonoBehaviour
 {
     public static BuildingManager Instance { get; private set; }
 
@@ -17,24 +17,46 @@ public class BuildingManager : NetworkBehaviour
     [Tooltip("Деталь стоит на земле, если её низ ниже этой высоты")]
     public float groundHeight = 0.2f;
 
-    const ulong NoOne = ulong.MaxValue;
+    const ulong NoOne = Net.NoOne;
+    const string MsgPlaceReq = "E.placeReq", MsgDismReq = "E.dismReq", MsgPickReq = "E.pickReq", MsgNodeReq = "E.nodeReq";
+    const string MsgPlace = "E.place", MsgRemove = "E.remove", MsgGive = "E.give", MsgNodeHit = "E.nodeHit", MsgSync = "E.sync";
 
     int nextId = 100000; // номера для новых деталей (детали сцены — от 1)
     bool stabilityDirty;
+    CustomMessagingManager registered;
+    bool connectSubscribed;
 
     // Что изменилось в мире — для тех, кто зайдёт позже
     readonly HashSet<int> removedSceneIds = new HashSet<int>();
     readonly Dictionary<int, Placed> placed = new Dictionary<int, Placed>();
-    readonly HashSet<int> depletedNodes = new HashSet<int>(); // вырубленные деревья и разбитые камни
+    readonly HashSet<int> depletedNodes = new HashSet<int>();
     struct Placed { public int index; public Vector3 pos; public Quaternion rot; }
 
     void Awake() { Instance = this; }
 
-    bool Online => NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
-    bool Authority => !Online || IsServer; // хост (или игра без сети)
-    ulong LocalId => Online ? NetworkManager.Singleton.LocalClientId : 0;
+    // Подстраховка для старой сцены: если список деталей пуст или у деталей нет номеров — чиним сами
+    void Start()
+    {
+        if (catalog.Count == 0)
+        {
+            PlayerBuilder pb = FindFirstObjectByType<PlayerBuilder>(FindObjectsInactive.Include);
+            if (pb != null) catalog.AddRange(pb.pieces);
+        }
+        var noId = new List<BuildPiece>();
+        foreach (BuildPiece p in FindObjectsByType<BuildPiece>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+            if (p.netId == 0) noId.Add(p);
+        noId.Sort((a, b) =>
+        {
+            Vector3 x = a.transform.position, y = b.transform.position;
+            int c = x.x.CompareTo(y.x);
+            if (c == 0) c = x.z.CompareTo(y.z);
+            if (c == 0) c = x.y.CompareTo(y.y);
+            return c;
+        });
+        for (int i = 0; i < noId.Count; i++) noId[i].AssignId(50000 + i);
+    }
 
-    public int IndexOf(BuildPiece piece) => piece == null ? -1 : catalog.FindIndex(p => p.pieceId == piece.pieceId);
+    public int IndexOf(BuildPiece piece) => piece == null ? -1 : catalog.FindIndex(p => p != null && p.pieceId == piece.pieceId);
 
     // ================= Запросы от игрока =================
     public static void RequestPlace(BuildPiece prefab, Vector3 pos, Quaternion rot)
@@ -43,91 +65,100 @@ public class BuildingManager : NetworkBehaviour
         if (m == null) return;
         int idx = m.IndexOf(prefab);
         if (idx < 0) return;
-        if (m.Authority) m.ServerPlace(idx, pos, rot);
-        else m.PlaceServerRpc(idx, pos, rot);
+        if (Net.IsHost) { m.ServerPlace(idx, pos, rot); return; }
+        FastBufferWriter w = Net.Writer();
+        try { w.WriteValueSafe(idx); w.WriteValueSafe(pos); w.WriteValueSafe(rot); Net.ToHost(MsgPlaceReq, w); }
+        finally { w.Dispose(); }
     }
 
-    public static void RequestDismantle(BuildPiece piece)
+    static bool IsLocked(int id) => BuildPiece.ById.TryGetValue(id, out BuildPiece p) && p.locked;
+
+    public static void RequestDismantle(BuildPiece piece) => SendIdRequest(piece == null ? 0 : piece.netId, MsgDismReq, id => Instance.ServerRemove(id, true, Net.LocalId));
+    public static void RequestPickUp(BuildPiece piece) => SendIdRequest(piece == null ? 0 : piece.netId, MsgPickReq, id => Instance.ServerPickUp(id, Net.LocalId));
+    public static void RequestHitNode(ResourceNode node) => SendIdRequest(node == null ? 0 : node.netId, MsgNodeReq, id => Instance.ServerHitNode(id, Net.LocalId));
+
+    static void SendIdRequest(int id, string msg, System.Action<int> asHost)
     {
-        BuildingManager m = Instance;
-        if (m == null || piece == null) return;
-        if (m.Authority) m.ServerRemove(piece.netId, true, m.LocalId);
-        else m.DismantleServerRpc(piece.netId);
+        if (Instance == null || id == 0) return;
+        if (msg != MsgNodeReq && IsLocked(id)) return; // дома деревни молотом не трогаем
+        if (Net.IsHost) { asHost(id); return; }
+        FastBufferWriter w = Net.Writer(16);
+        try { w.WriteValueSafe(id); Net.ToHost(msg, w); }
+        finally { w.Dispose(); }
     }
 
-    public static void RequestPickUp(BuildPiece piece)
-    {
-        BuildingManager m = Instance;
-        if (m == null || piece == null) return;
-        if (m.Authority) m.ServerPickUp(piece.netId, m.LocalId);
-        else m.PickUpServerRpc(piece.netId);
-    }
-
-    // Удар по дереву / камню
-    public static void RequestHitNode(ResourceNode node)
-    {
-        BuildingManager m = Instance;
-        if (m == null || node == null) return;
-        if (m.Authority) m.ServerHitNode(node.netId, m.LocalId);
-        else m.HitNodeServerRpc(node.netId);
-    }
-
-    // Урон — только на хосте (его будут наносить враги)
+    // Урон — только на хосте (его наносят твари)
     public static void Damage(BuildPiece piece, float amount)
     {
         BuildingManager m = Instance;
-        if (m == null || piece == null || !m.Authority) return;
+        if (m == null || piece == null || !Net.IsHost) return;
         piece.ApplyDamage(amount);
         if (piece.Health <= 0f) m.ServerRemove(piece.netId, true, NoOne);
     }
 
-    // ================= Игрок -> хост =================
-    [ServerRpc(RequireOwnership = false)]
-    void PlaceServerRpc(int idx, Vector3 pos, Quaternion rot) => ServerPlace(idx, pos, rot);
+    // ================= Подписка на сообщения =================
+    void Update()
+    {
+        Net.EnsureRegistered(ref registered, Register);
+    }
 
-    [ServerRpc(RequireOwnership = false)]
-    void DismantleServerRpc(int id, ServerRpcParams rpc = default) => ServerRemove(id, true, rpc.Receive.SenderClientId);
+    void Register(CustomMessagingManager cmm)
+    {
+        // Хосту от игроков
+        cmm.RegisterNamedMessageHandler(MsgPlaceReq, (sender, r) =>
+        {
+            r.ReadValueSafe(out int idx); r.ReadValueSafe(out Vector3 pos); r.ReadValueSafe(out Quaternion rot);
+            if (Net.IsHost) ServerPlace(idx, pos, rot);
+        });
+        cmm.RegisterNamedMessageHandler(MsgDismReq, (sender, r) => { r.ReadValueSafe(out int id); if (Net.IsHost && !IsLocked(id)) ServerRemove(id, true, sender); });
+        cmm.RegisterNamedMessageHandler(MsgPickReq, (sender, r) => { r.ReadValueSafe(out int id); if (Net.IsHost && !IsLocked(id)) ServerPickUp(id, sender); });
+        cmm.RegisterNamedMessageHandler(MsgNodeReq, (sender, r) => { r.ReadValueSafe(out int id); if (Net.IsHost) ServerHitNode(id, sender); });
 
-    [ServerRpc(RequireOwnership = false)]
-    void PickUpServerRpc(int id, ServerRpcParams rpc = default) => ServerPickUp(id, rpc.Receive.SenderClientId);
+        // Игрокам от хоста
+        cmm.RegisterNamedMessageHandler(MsgPlace, (sender, r) =>
+        {
+            r.ReadValueSafe(out int id); r.ReadValueSafe(out int idx); r.ReadValueSafe(out Vector3 pos); r.ReadValueSafe(out Quaternion rot);
+            if (!Net.IsHost) LocalPlace(id, idx, pos, rot);
+        });
+        cmm.RegisterNamedMessageHandler(MsgRemove, (sender, r) =>
+        {
+            r.ReadValueSafe(out int id); r.ReadValueSafe(out bool debris); r.ReadValueSafe(out ulong dropFor);
+            if (!Net.IsHost) LocalRemove(id, debris, dropFor);
+        });
+        cmm.RegisterNamedMessageHandler(MsgGive, (sender, r) => { r.ReadValueSafe(out int idx); LocalGivePiece(idx); });
+        cmm.RegisterNamedMessageHandler(MsgNodeHit, (sender, r) =>
+        {
+            r.ReadValueSafe(out int id); r.ReadValueSafe(out int left); r.ReadValueSafe(out ulong by);
+            if (!Net.IsHost) LocalHitNode(id, left, by);
+        });
+        cmm.RegisterNamedMessageHandler(MsgSync, (sender, r) =>
+        {
+            r.ReadValueSafe(out int[] removed); r.ReadValueSafe(out int[] ids); r.ReadValueSafe(out int[] idxs);
+            r.ReadValueSafe(out Vector3[] poss); r.ReadValueSafe(out Quaternion[] rots); r.ReadValueSafe(out int[] nodes);
+            if (Net.IsHost) return;
+            foreach (int id in nodes)
+                if (ResourceNode.ById.TryGetValue(id, out ResourceNode n)) n.RemoveInstant();
+            foreach (int id in removed) LocalRemove(id, false, NoOne);
+            for (int i = 0; i < ids.Length; i++) LocalPlace(ids[i], idxs[i], poss[i], rots[i]);
+        });
 
-    [ServerRpc(RequireOwnership = false)]
-    void HitNodeServerRpc(int id, ServerRpcParams rpc = default) => ServerHitNode(id, rpc.Receive.SenderClientId);
+        if (!connectSubscribed)
+        {
+            connectSubscribed = true;
+            Net.NM.OnClientConnectedCallback += OnClientConnected;
+        }
+    }
 
     // ================= Хост делает и рассылает =================
-    void ServerHitNode(int id, ulong by)
-    {
-        if (!ResourceNode.ById.TryGetValue(id, out ResourceNode n) || n.HitsLeft <= 0) return;
-        int left = n.HitsLeft - 1;
-        if (left <= 0) depletedNodes.Add(id);
-        LocalHitNode(id, left, by);
-        if (Online) HitNodeClientRpc(id, left, by);
-    }
-
-    [ClientRpc]
-    void HitNodeClientRpc(int id, int left, ulong by)
-    {
-        if (IsServer) return;
-        LocalHitNode(id, left, by);
-    }
-
-    void LocalHitNode(int id, int left, ulong by)
-    {
-        if (!ResourceNode.ById.TryGetValue(id, out ResourceNode n)) return;
-        Vector3 p = n.DropPoint;
-        ResourceType type = n.resource;
-        int amount = n.yieldPerHit + (left <= 0 ? n.bonusOnBreak : 0);
-        n.ApplyHit(left);
-        if (by == LocalId) ResourcePickup.Spawn(type, amount, p); // ресурсы выпадают тому, кто бил
-    }
-
     void ServerPlace(int idx, Vector3 pos, Quaternion rot)
     {
         if (idx < 0 || idx >= catalog.Count) return;
         int id = nextId++;
         placed[id] = new Placed { index = idx, pos = pos, rot = rot };
         LocalPlace(id, idx, pos, rot);
-        if (Online) PlaceClientRpc(id, idx, pos, rot);
+        FastBufferWriter w = Net.Writer();
+        try { w.WriteValueSafe(id); w.WriteValueSafe(idx); w.WriteValueSafe(pos); w.WriteValueSafe(rot); Net.ToAllClients(MsgPlace, w); }
+        finally { w.Dispose(); }
     }
 
     // dropFor — кому выпадут ресурсы (тому, кто разобрал)
@@ -136,7 +167,9 @@ public class BuildingManager : NetworkBehaviour
         if (!BuildPiece.ById.ContainsKey(id)) return;
         if (!placed.Remove(id)) removedSceneIds.Add(id);
         LocalRemove(id, debris, dropFor);
-        if (Online) RemoveClientRpc(id, debris, dropFor);
+        FastBufferWriter w = Net.Writer(32);
+        try { w.WriteValueSafe(id); w.WriteValueSafe(debris); w.WriteValueSafe(dropFor); Net.ToAllClients(MsgRemove, w); }
+        finally { w.Dispose(); }
         stabilityDirty = true;
     }
 
@@ -146,31 +179,44 @@ public class BuildingManager : NetworkBehaviour
         int idx = IndexOf(piece);
         ServerRemove(id, false, NoOne);
         if (idx < 0) return;
-        if (forClient == LocalId) LocalGivePiece(idx);
-        else GivePieceClientRpc(idx, new ClientRpcParams { Send = new ClientRpcSendParams { TargetClientIds = new[] { forClient } } });
+        if (forClient == Net.LocalId) { LocalGivePiece(idx); return; }
+        FastBufferWriter w = Net.Writer(16);
+        try { w.WriteValueSafe(idx); Net.ToClient(MsgGive, forClient, w); }
+        finally { w.Dispose(); }
     }
 
-    [ClientRpc]
-    void PlaceClientRpc(int id, int idx, Vector3 pos, Quaternion rot)
+    void ServerHitNode(int id, ulong by)
     {
-        if (IsServer) return; // у хоста уже сделано
-        LocalPlace(id, idx, pos, rot);
+        if (!ResourceNode.ById.TryGetValue(id, out ResourceNode n) || n.HitsLeft <= 0) return;
+        int left = n.HitsLeft - 1;
+        if (left <= 0) depletedNodes.Add(id);
+        LocalHitNode(id, left, by);
+        FastBufferWriter w = Net.Writer(32);
+        try { w.WriteValueSafe(id); w.WriteValueSafe(left); w.WriteValueSafe(by); Net.ToAllClients(MsgNodeHit, w); }
+        finally { w.Dispose(); }
     }
 
-    [ClientRpc]
-    void RemoveClientRpc(int id, bool debris, ulong dropFor)
+    void OnClientConnected(ulong clientId)
     {
-        if (IsServer) return;
-        LocalRemove(id, debris, dropFor);
+        if (!Net.Online || !Net.NM.IsServer || clientId == Net.NM.LocalClientId) return;
+        var ids = new List<int>(); var idxs = new List<int>(); var poss = new List<Vector3>(); var rots = new List<Quaternion>();
+        foreach (var kv in placed) { ids.Add(kv.Key); idxs.Add(kv.Value.index); poss.Add(kv.Value.pos); rots.Add(kv.Value.rot); }
+        FastBufferWriter w = Net.Writer(4096);
+        try
+        {
+            w.WriteValueSafe(new List<int>(removedSceneIds).ToArray());
+            w.WriteValueSafe(ids.ToArray()); w.WriteValueSafe(idxs.ToArray());
+            w.WriteValueSafe(poss.ToArray()); w.WriteValueSafe(rots.ToArray());
+            w.WriteValueSafe(new List<int>(depletedNodes).ToArray());
+            Net.ToClient(MsgSync, clientId, w, NetworkDelivery.ReliableFragmentedSequenced);
+        }
+        finally { w.Dispose(); }
     }
-
-    [ClientRpc]
-    void GivePieceClientRpc(int idx, ClientRpcParams rpc = default) => LocalGivePiece(idx);
 
     // ================= То, что происходит у каждого игрока =================
     void LocalPlace(int id, int idx, Vector3 pos, Quaternion rot)
     {
-        if (BuildPiece.ById.ContainsKey(id)) return;
+        if (BuildPiece.ById.ContainsKey(id) || idx < 0 || idx >= catalog.Count) return;
         BuildPiece piece = Instantiate(catalog[idx], pos, rot, transform);
         piece.name = catalog[idx].name;
         piece.AssignId(id);
@@ -179,7 +225,7 @@ public class BuildingManager : NetworkBehaviour
     void LocalRemove(int id, bool debris, ulong dropFor)
     {
         if (!BuildPiece.ById.TryGetValue(id, out BuildPiece piece)) return;
-        if (debris && dropFor != NoOne && dropFor == LocalId)
+        if (debris && dropFor != NoOne && dropFor == Net.LocalId)
         {
             ResourcePickup.Spawn(ResourceType.Wood, piece.costWood, piece.Center);
             ResourcePickup.Spawn(ResourceType.Stone, piece.costStone, piece.Center);
@@ -189,51 +235,23 @@ public class BuildingManager : NetworkBehaviour
 
     void LocalGivePiece(int idx)
     {
-        if (PlayerBuilder.Local != null) PlayerBuilder.Local.ReceivePiece(catalog[idx]);
+        if (idx >= 0 && idx < catalog.Count && PlayerBuilder.Local != null) PlayerBuilder.Local.ReceivePiece(catalog[idx]);
     }
 
-    // ================= Тем, кто зашёл позже =================
-    public override void OnNetworkSpawn()
+    void LocalHitNode(int id, int left, ulong by)
     {
-        if (IsServer) NetworkManager.OnClientConnectedCallback += OnClientConnected;
-    }
-
-    public override void OnNetworkDespawn()
-    {
-        if (NetworkManager != null) NetworkManager.OnClientConnectedCallback -= OnClientConnected;
-    }
-
-    void OnClientConnected(ulong clientId)
-    {
-        if (clientId == NetworkManager.ServerClientId) return;
-        var removed = new List<int>(removedSceneIds);
-        var ids = new List<int>();
-        var idxs = new List<int>();
-        var poss = new List<Vector3>();
-        var rots = new List<Quaternion>();
-        foreach (var kv in placed)
-        {
-            ids.Add(kv.Key); idxs.Add(kv.Value.index); poss.Add(kv.Value.pos); rots.Add(kv.Value.rot);
-        }
-        var nodes = new List<int>(depletedNodes);
-        SyncStateClientRpc(removed.ToArray(), ids.ToArray(), idxs.ToArray(), poss.ToArray(), rots.ToArray(), nodes.ToArray(),
-            new ClientRpcParams { Send = new ClientRpcSendParams { TargetClientIds = new[] { clientId } } });
-    }
-
-    [ClientRpc]
-    void SyncStateClientRpc(int[] removed, int[] ids, int[] idxs, Vector3[] poss, Quaternion[] rots, int[] nodes, ClientRpcParams rpc = default)
-    {
-        if (IsServer) return;
-        foreach (int id in nodes)
-            if (ResourceNode.ById.TryGetValue(id, out ResourceNode n)) n.RemoveInstant();
-        foreach (int id in removed) LocalRemove(id, false, NoOne);
-        for (int i = 0; i < ids.Length; i++) LocalPlace(ids[i], idxs[i], poss[i], rots[i]);
+        if (!ResourceNode.ById.TryGetValue(id, out ResourceNode n)) return;
+        Vector3 p = n.DropPoint;
+        ResourceType type = n.resource;
+        int amount = n.yieldPerHit + (left <= 0 ? n.bonusOnBreak : 0);
+        n.ApplyHit(left);
+        if (by == Net.LocalId) ResourcePickup.Spawn(type, amount, p); // ресурсы выпадают тому, кто бил
     }
 
     // ================= Опора (считает только хост) =================
     void LateUpdate()
     {
-        if (!stabilityDirty || !Authority) return;
+        if (!stabilityDirty || !Net.IsHost) return;
         stabilityDirty = false;
         CheckStability();
     }
@@ -243,19 +261,23 @@ public class BuildingManager : NetworkBehaviour
         Physics.SyncTransforms();
         var supported = new HashSet<BuildPiece>();
         var queue = new Queue<BuildPiece>();
-
         foreach (BuildPiece p in BuildPiece.All)
             if (p.transform.position.y < groundHeight) { supported.Add(p); queue.Enqueue(p); }
-
         while (queue.Count > 0)
             foreach (BuildPiece n in queue.Dequeue().GetNeighbours())
                 if (supported.Add(n)) queue.Enqueue(n);
-
         var falling = new List<int>();
         foreach (BuildPiece p in BuildPiece.All)
             if (!supported.Contains(p)) falling.Add(p.netId);
-
         // Рухнувшее просто рассыпается (без ресурсов) — стройте с опорой!
         foreach (int id in falling) ServerRemove(id, true, NoOne);
+    }
+
+    // Если сцена старая (нет меню и сети) — пишем крупно, что делать
+    void OnGUI()
+    {
+        if (NetworkManager.Singleton != null) return;
+        GUI.Label(new Rect(20, Screen.height / 2f - 60, Screen.width - 40, 120),
+            "СЦЕНА СТАРАЯ!\nВыйди из Play и нажми в меню сверху: Eirion → Создать сцену форта → Да", Hud.CenterBig);
     }
 }

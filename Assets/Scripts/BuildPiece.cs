@@ -15,6 +15,8 @@ public class BuildPiece : MonoBehaviour
     public int costWood = 0;                 // сколько стоит построить
     public int costStone = 0;
     public bool buildable = true;            // показывать ли в меню молота
+    public bool village;                     // часть деревни (её защищаем)
+    public bool locked;                      // нельзя разобрать или взять молотом
 
     public float Health { get; private set; }
 

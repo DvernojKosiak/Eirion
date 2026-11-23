@@ -3,13 +3,15 @@ using UnityEngine.InputSystem;
 
 // ЛКМ — взмах тем, что в руке (меч, топор, кирка).
 //   Топор рубит деревья, кирка бьёт камни — выпадают ресурсы.
-//   Меч свои постройки не ломает, толкает обломки. Урон по врагам добавим вместе с врагами.
+//   Меч бьёт тварей сильнее всего (топор и кирка — слабее). Свои постройки не ломает.
 // Ещё рисует прицел и подсказку, на что смотришь.
 public class PlayerCombat : MonoBehaviour
 {
     public float range = 3f;
     public float cooldown = 0.45f;
     public float pushForce = 6f;
+    public float swordDamage = 25f;
+    public float otherToolDamage = 12f;
 
     Camera cam;
     PlayerHotbar hotbar;
@@ -18,6 +20,7 @@ public class PlayerCombat : MonoBehaviour
     Transform swingModel;
     Quaternion restRotation;
     ResourceNode lookedNode;
+    Enemy lookedEnemy;
     string message;
     float messageUntil;
 
@@ -41,8 +44,12 @@ public class PlayerCombat : MonoBehaviour
 
         Tool tool = hotbar != null ? hotbar.Current : Tool.Sword;
         lookedNode = null;
+        lookedEnemy = null;
         if (tool != Tool.Hammer && AimHelper.Aim(cam, transform, range, out RaycastHit hit))
+        {
             lookedNode = hit.collider.GetComponentInParent<ResourceNode>();
+            lookedEnemy = hit.collider.GetComponentInParent<Enemy>();
+        }
 
         Mouse mouse = Mouse.current;
         if (tool != Tool.Hammer && mouse != null && Cursor.lockState == CursorLockMode.Locked &&
@@ -50,7 +57,9 @@ public class PlayerCombat : MonoBehaviour
         {
             nextHitTime = Time.time + cooldown;
             PlaySwing();
-            if (lookedNode != null)
+            if (lookedEnemy != null)
+                EnemyManager.RequestHit(lookedEnemy, tool == Tool.Sword ? swordDamage : otherToolDamage);
+            else if (lookedNode != null)
             {
                 if (tool == lookedNode.requiredTool) BuildingManager.RequestHitNode(lookedNode);
                 else Say("Нужен " + PlayerHotbar.NameOf(lookedNode.requiredTool).ToLower() + " (клавиша " + ((int)lookedNode.requiredTool + 1) + ")");

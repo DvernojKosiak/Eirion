@@ -21,7 +21,14 @@ public class PlayerMovement : MonoBehaviour
     public float dodgeSpeed = 11f;
     public float dodgeTime = 0.32f;
     public float dodgeCost = 16f;
+    public float slideTime = 0.6f;          // подкат: перекат вперёд на бегу
+    public float slideSpeed = 13f;
     public bool IsDodging => Time.time < dodgeUntil - 0.05f;
+    public bool IsSliding => sliding && Time.time < dodgeUntil;
+    public Vector3 SlideDir => dodgeDir;
+    public float SlideLow { get; private set; }  // 0..1 — насколько присел в подкате (для камеры)
+    bool sliding;
+    float dodgeLen;
     float dodgeUntil, nextDodge;
     Vector3 dodgeDir;
 
@@ -35,6 +42,16 @@ public class PlayerMovement : MonoBehaviour
     PlayerHealth health;
     public float DodgeRoll { get; private set; } // 0..1 — для наклона камеры при перекате
     float verticalVelocity;          // скорость вверх/вниз
+    Vector3 pushVel;                 // толчок от удара (тварь отбросила)
+    float staggerUntil;              // после сильного удара ноги заплетаются — медленнее
+
+    // Удар отбросил героя: vel — скорость толчка, stagger — сколько секунд идти медленно
+    public void Push(Vector3 vel, float stagger)
+    {
+        vel.y = 0f;
+        pushVel += vel;
+        staggerUntil = Mathf.Max(staggerUntil, Time.time + stagger);
+    }
 
     void Awake()
     {
@@ -66,17 +83,30 @@ public class PlayerMovement : MonoBehaviour
                       (health == null || health.UseStamina(sprintCost * Time.deltaTime, true));
         float speed = sprint ? sprintSpeed : walkSpeed;
         if (health != null && health.IsBlocking) speed *= 0.5f;
+        if (Time.time < staggerUntil) speed *= 0.4f;
 
         // Перекат: рывок в сторону движения (или назад), на миг неуязвим
         if ((kb.leftCtrlKey.wasPressedThisFrame || kb.cKey.wasPressedThisFrame) && Time.time >= nextDodge && controller.isGrounded &&
             (health == null || health.UseStamina(dodgeCost, false)))
         {
             dodgeDir = move.sqrMagnitude > 0.01f ? move.normalized : -transform.forward;
-            dodgeUntil = Time.time + dodgeTime;
-            nextDodge = Time.time + dodgeTime + 0.35f;
+            sliding = input.y > 0.3f;                          // жмёшь вперёд — это подкат, сбивает тварей с ног
+            dodgeLen = sliding ? slideTime : dodgeTime;
+            dodgeUntil = Time.time + dodgeLen;
+            nextDodge = Time.time + dodgeLen + 0.35f;
         }
-        if (Time.time < dodgeUntil) { move = dodgeDir; speed = dodgeSpeed; }
-        DodgeRoll = Time.time < dodgeUntil ? 1f - (dodgeUntil - Time.time) / dodgeTime : 0f;
+        if (Time.time < dodgeUntil)
+        {
+            move = dodgeDir;
+            if (sliding)
+            {
+                float k = 1f - (dodgeUntil - Time.time) / dodgeLen;   // 0..1
+                speed = Mathf.Lerp(slideSpeed, walkSpeed * 0.6f, k * k); // разгон, потом тормозит по земле
+            }
+            else speed = dodgeSpeed;
+        }
+        DodgeRoll = Time.time < dodgeUntil && !sliding ? 1f - (dodgeUntil - Time.time) / dodgeLen : 0f;
+        SlideLow = Mathf.MoveTowards(SlideLow, IsSliding ? 1f : 0f, Time.deltaTime * (IsSliding ? 9f : 4f));
 
         // 3. Прыжок и гравитация
         if (controller.isGrounded && verticalVelocity < 0)
@@ -88,7 +118,8 @@ public class PlayerMovement : MonoBehaviour
         verticalVelocity += gravity * Time.deltaTime;
 
         // 4. Двигаем героя
-        Vector3 velocity = move * speed + Vector3.up * verticalVelocity;
+        pushVel = Vector3.Lerp(pushVel, Vector3.zero, 1f - Mathf.Exp(-7f * Time.deltaTime));
+        Vector3 velocity = move * speed + pushVel + Vector3.up * verticalVelocity;
         bool wasGrounded = controller.isGrounded;
         float fallSpeed = -verticalVelocity;
         controller.Move(velocity * Time.deltaTime);

@@ -6,7 +6,7 @@ public enum EnemyKind { Crawler, Runner, Brute, Spitter }
 // Каким движением ударили. Направление удара выбирается мышью (см. PlayerCombat).
 //   Slash — рубящий вбок, Chop — сверху вниз, Uppercut — снизу вверх, Thrust — выпад (колющий),
 //   Cross — два рубящих крест-накрест, RipOut — вырвать застрявший клинок.
-public enum HitType { Slash, Chop, Uppercut, Thrust, Kick, Tool, RipOut, Cross, Arrow }
+public enum HitType { Slash, Chop, Uppercut, Thrust, Kick, Tool, RipOut, Cross, Arrow, Trip }
 
 // Всё про один удар
 public struct HitInfo
@@ -23,11 +23,11 @@ public struct HitInfo
 public static class Callout
 {
     public const int None = 0, Execution = 1, Head = 2, Arm = 3, Leg = 4, Sack = 5, Kneel = 6, Disarm = 7, Launch = 8, Air = 9,
-                     Pinned = 10, Wall = 11, Spikes = 12, Crushed = 13, RipOut = 14, Finisher = 15, Cross = 16, Impaled = 17;
+                     Pinned = 10, Wall = 11, Spikes = 12, Crushed = 13, RipOut = 14, Finisher = 15, Cross = 16, Impaled = 17, Trip = 18;
     public static readonly string[] Text =
     {
         "", "КАЗНЬ!", "ГОЛОВА С ПЛЕЧ!", "ОТРУБИЛ РУКУ!", "ОТРУБИЛ НОГУ!", "МЕШОК ЛОПНУЛ!", "НА КОЛЕНИ!", "ВЫБИЛ УДАР!", "ПОДБРОС!", "В ПОЛЁТЕ!",
-        "ПРИГВОЖДЁН!", "ОБ СТЕНУ!", "НА КОЛЬЯ!", "РАЗДАВЛЕН!", "ВЫРВАЛ КЛИНОК!", "ДОБИВАНИЕ!", "КРЕСТ!", "НАСАДИЛ!"
+        "ПРИГВОЖДЁН!", "ОБ СТЕНУ!", "НА КОЛЬЯ!", "РАЗДАВЛЕН!", "ВЫРВАЛ КЛИНОК!", "ДОБИВАНИЕ!", "КРЕСТ!", "НАСАДИЛ!", "ПОДСЕЧКА!"
     };
 }
 
@@ -146,7 +146,7 @@ public class Enemy : MonoBehaviour
     public bool Lost(BodyPartType p) => (LostMask & (1 << (int)p)) != 0;
     int LegsLost => (Lost(BodyPartType.LegL) ? 1 : 0) + (Lost(BodyPartType.LegR) ? 1 : 0);
     int ArmsLost => (Lost(BodyPartType.ArmL) ? 1 : 0) + (Lost(BodyPartType.ArmR) ? 1 : 0);
-    float SpeedMul => LegsLost == 2 ? 0.25f : LegsLost == 1 ? 0.45f : Time.time < limpUntil ? 0.6f : 1f;
+    float SpeedMul => LegsLost == 2 ? 0.25f : LegsLost == 1 ? 0.3f : Time.time < limpUntil ? 0.6f : 1f;
     float DamageMul => ArmsLost == 2 ? 0.35f : ArmsLost == 1 ? 0.65f : 1f;
 
     // Характеристики вида. wave — номер набега (с каждым тварь крепче)
@@ -540,7 +540,7 @@ public class Enemy : MonoBehaviour
 
         float dmg = h.damage * PartMultiplier(part);
         if (CurrentState == State.Pinned) dmg *= 1.5f;
-        if (CurrentState == State.Stagger || CurrentState == State.Kneel) dmg *= 1.25f;
+        if (CurrentState == State.Stagger || CurrentState == State.Kneel || CurrentState == State.Down) dmg *= 1.25f; // лежачего бить больнее
 
         // КАЗНЬ: тварь на колене, удар сверху (или тяжёлый) по голове
         if (CurrentState == State.Kneel && part == BodyPartType.Head && (h.type == HitType.Chop || h.heavy))
@@ -646,10 +646,11 @@ public class Enemy : MonoBehaviour
                 // Боковой удар разворачивает тело в сторону клинка
                 float side = Vector3.Dot(dir, transform.right);
                 twist += -side * (brute ? 50f : 140f) * (h.heavy ? 1.4f : 1f);
-                Knock(dir * (h.heavy ? 8f : 3.5f));
+                Knock(dir * (h.heavy ? 8f : 5f));
                 if (h.type == HitType.Cross && !brute) { BeginThrow(dir * 9f + Vector3.up * 3f, 6f); callout = Callout.Cross; break; }
                 if (h.heavy && !brute) { BeginThrow(dir * 8f + Vector3.up * 3f, 4f); break; }
                 if (h.heavy && brute) { Interrupt(State.Stagger, 0.8f); break; }
+                if (!brute) Interrupt(State.Flinch, 0.3f);       // больно: сбивает замах, на миг замирает
                 LimbEffect(part, h, brute, ref callout);
                 break;
             }
@@ -678,6 +679,11 @@ public class Enemy : MonoBehaviour
                     Interrupt(State.Stagger, CurrentState == State.Kneel ? 1.0f : 0.5f);
                 }
                 else BeginThrow(dir * 9f + Vector3.up * 3.5f, 2f);
+                break;
+            case HitType.Trip:
+                // подкат по ногам: обычная тварь падает, громила только шатается
+                if (brute) { Knock(dir * 1.5f); Interrupt(State.Stagger, 0.5f); }
+                else { Knock(dir * 2.5f); Interrupt(State.Down, 1.5f); callout = Callout.Trip; }
                 break;
             case HitType.RipOut:
                 Knock(dir * 2f);
@@ -736,7 +742,7 @@ public class Enemy : MonoBehaviour
         if (OnBlade || CurrentState == State.Thrown || CurrentState == State.Grabbed) return;
         // Удар сбивает замах
         if (CurrentState == State.WindUp) { strikePiece = null; nextAttack = Time.time + 0.5f; }
-        if ((CurrentState == State.Stagger || CurrentState == State.Kneel) && s == State.Flinch) return; // шатается — пусть шатается
+        if ((CurrentState == State.Stagger || CurrentState == State.Kneel || CurrentState == State.Down) && s == State.Flinch) return; // шатается — пусть шатается
         SetState(s, duration);
         windTint = 0f;
     }
@@ -1071,7 +1077,16 @@ public class Enemy : MonoBehaviour
         Vector3 axis = hdir.sqrMagnitude > 0.09f * dir.sqrMagnitude
             ? Vector3.Cross(Vector3.up, hdir.normalized)
             : transform.right * (dir.y < 0f ? 1f : -1f);              // сверху — кивок вперёд, снизу — запрокидывает
-        Vector3 local = transform.InverseTransformDirection(axis) * 200f * strength; // отшатывается, без диких изгибов
+
+        // Удар бьёт всё тело разом, как твёрдое: его сразу отбрасывает и откидывает, потом оно выпрямляется
+        float heavyK = kind == EnemyKind.Brute ? 0.4f : 1f;
+        Vector3 la = transform.InverseTransformDirection(axis);
+        recoilRot += la * 16f * strength * heavyK;                   // градусы — сразу, без разгона: так читается удар
+        Vector3 lp = transform.InverseTransformDirection(hdir.sqrMagnitude > 0.0001f ? hdir.normalized : Vector3.zero);
+        recoilPos += lp * 0.22f * strength * heavyK;
+        hitShake = Mathf.Max(hitShake, 0.12f * strength);           // тело дрожит от удара
+
+        Vector3 local = la * 110f * strength; // суставы чуть мотаются, но не гнутся
         BodyPart torso = parts[(int)BodyPartType.Torso];
         BodyPart p = part >= 0 && part < parts.Length ? parts[part] : null;
         if (p == null || p.lost) p = torso;
@@ -1083,6 +1098,11 @@ public class Enemy : MonoBehaviour
 
     // Расплющило (у копий — через EnemyManager.Impact)
     public void Squash() { squash = 1f; }
+
+    Vector3 recoilRot, recoilRotVel, recoilPos, recoilPosVel; // отдача всего тела от удара
+    float hitShake;
+    Quaternion visRot = Quaternion.identity;
+    Vector3 visPos;
 
     public void Lunge() { lunge = 1f; }
     public void Flash() { flash = 1f; }
@@ -1144,8 +1164,8 @@ public class Enemy : MonoBehaviour
             default:
                 // наклон по движению: отбросило назад — откидывается, вбок — заваливается
                 rot = Quaternion.Euler(Mathf.Clamp(visVel.z * 2f, -15f, 6f), 0f, Mathf.Clamp(-visVel.x * 2.5f, -12f, 12f));
-                if (legsLost == 2) { rot = Quaternion.Euler(68f, 0f, 0f); pos.y = -0.25f * bodyScale; }        // ползёт
-                else if (legsLost == 1) { rot = Quaternion.Euler(8f, 0f, Mathf.Sin(walkPhase) * 12f); pos.y = -0.12f * bodyScale; } // хромает
+                // без ноги не устоять — ползёт на руках (с одной ногой — ещё и отталкивается ею, кренясь)
+                if (legsLost >= 1) { rot = Quaternion.Euler(68f, 0f, legsLost == 1 ? Mathf.Sin(walkPhase) * 8f : 0f); pos.y = -0.25f * bodyScale; }
                 break;
         }
         if (CurrentState == State.Thrown && !Simulated)
@@ -1157,9 +1177,22 @@ public class Enemy : MonoBehaviour
         else
         {
             visualSpin = 0f;
-            visual.localRotation = Quaternion.Slerp(visual.localRotation, rot, 14f * dt);
+            // пружина отдачи: резкий отброс, быстрый возврат без «желе»
+            recoilRotVel += (-recoilRot * 170f - recoilRotVel * 22f) * dt;
+            recoilRot += recoilRotVel * dt;
+            recoilPosVel += (-recoilPos * 140f - recoilPosVel * 20f) * dt;
+            recoilPos += recoilPosVel * dt;
+            hitShake = Mathf.MoveTowards(hitShake, 0f, dt * 0.8f);
+            Vector3 jitter = hitShake > 0f ? new Vector3(Mathf.Sin(t * 90f), 0f, Mathf.Cos(t * 77f)) * hitShake * 0.15f : Vector3.zero;
+            visRot = Quaternion.Slerp(visRot, rot, 14f * dt);
+            float ra = recoilRot.magnitude;
+            Quaternion rr = ra > 0.01f ? Quaternion.AngleAxis(ra, recoilRot / ra) : Quaternion.identity;
+            visual.localRotation = rr * visRot;
+            visPos = Vector3.Lerp(visPos, pos, 20f * dt);
+            pos = visPos + recoilPos + jitter;
         }
-        visual.localPosition = Vector3.Lerp(visual.localPosition, pos, 20f * dt);
+        if (CurrentState == State.Thrown) visPos = Vector3.Lerp(visual.localPosition, pos, 20f * dt);
+        visual.localPosition = CurrentState == State.Thrown ? visPos : pos;
         visual.localScale = Vector3.one * bodyScale * 1f + Vector3.Scale(new Vector3(0.3f, 0.1f, -0.5f), Vector3.one * bodyScale * squash);
 
         AnimateParts(t, dt, legsLost);
@@ -1233,7 +1266,8 @@ public class Enemy : MonoBehaviour
                     if (arm) e.x = -60f;
                     break;
                 default:
-                    if (legsLost == 2 && arm) e.x = -120f + Mathf.Sin(walkPhase * 1.5f + side) * 40f; // подтягивается на руках
+                    if (legsLost >= 1 && arm) e.x = -120f + Mathf.Sin(walkPhase * 1.5f + side) * 40f; // подтягивается на руках
+                    if (legsLost == 1 && leg) e.x = 40f + Mathf.Sin(walkPhase * 1.5f) * 25f;           // уцелевшая нога волочится и толкает
                     break;
             }
 

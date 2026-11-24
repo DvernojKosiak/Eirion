@@ -15,7 +15,8 @@ public class PlayerBow : MonoBehaviour
     public float minSpeed = 14f;
     public float maxSpeed = 48f;
     public float zoom = 12f;             // на сколько градусов приближает камера при натяжении
-    public float holdStamina = 6f;       // в секунду, пока держишь полностью натянутым
+    public float holdStamina = 6f;
+    public bool infiniteArrows = true;   // пока отлаживаем бой — стрелы не кончаются       // в секунду, пока держишь полностью натянутым
 
     PlayerHotbar hotbar;
     Inventory inventory;
@@ -35,6 +36,7 @@ public class PlayerBow : MonoBehaviour
     float draw;                         // 0..1 — насколько натянут
     float shotKick;                     // отдача после выстрела
     float noArrowsMsgUntil;
+    bool wasSelected;
 
     static string markText;
     static float markUntil;
@@ -92,7 +94,7 @@ public class PlayerBow : MonoBehaviour
     }
 
     bool Selected => hotbar != null && hotbar.Current == Tool.Bow;
-    int Arrows => inventory != null ? inventory.Count(ResourceType.Arrow) : 99;
+    int Arrows => infiniteArrows || inventory == null ? 999 : inventory.Count(ResourceType.Arrow);
 
     void Update()
     {
@@ -103,7 +105,7 @@ public class PlayerBow : MonoBehaviour
             drawing = false; draw = 0f; shotKick = 0f;
             bow.localPosition = restPos; bow.localRotation = restRot;
             SetFov(0f);
-            PlayerCamera.LookScale = 1f;
+            if (wasSelected) { PlayerCamera.LookScale = 1f; wasSelected = false; }
             return;
         }
 
@@ -142,6 +144,7 @@ public class PlayerBow : MonoBehaviour
         shotKick = Mathf.MoveTowards(shotKick, 0f, Time.deltaTime * 5f);
         SetFov(draw);
         PlayerCamera.LookScale = Mathf.Lerp(1f, 0.6f, draw); // натянул — целишься точнее
+        wasSelected = true;
         Pose();
     }
 
@@ -174,7 +177,7 @@ public class PlayerBow : MonoBehaviour
 
     void Shoot()
     {
-        if (inventory != null && !inventory.Take(ResourceType.Arrow, 1)) return;
+        if (!infiniteArrows && inventory != null && !inventory.Take(ResourceType.Arrow, 1)) return;
         bool heavy = draw >= 0.95f;
         Vector3 dir = cam.transform.forward;
         // не до конца натянул — стрела идёт чуть неточно
@@ -184,6 +187,7 @@ public class PlayerBow : MonoBehaviour
         Vector3 vel = dir * Mathf.Lerp(minSpeed, maxSpeed, draw);
         EnemyManager.ShootArrow(origin, vel, heavy, transform.root);
         shotKick = 1f;
+        CombatFx.Play(CombatFx.Snd.Twang, cam.transform.position, 0.5f + 0.5f * draw, Mathf.Lerp(1.25f, 0.95f, draw));
         draw = 0f;
         PlayerCamera.Shake(heavy ? 0.12f : 0.05f);
     }
@@ -219,7 +223,7 @@ public class PlayerBow : MonoBehaviour
         }
 
         int n = Arrows;
-        GUI.Label(new Rect(cx - 150, Screen.height - 120, 300, 24), "Стрел: " + n, Hud.Center);
+        GUI.Label(new Rect(cx - 150, Screen.height - 120, 300, 24), (infiniteArrows ? "Стрелы: без конца" : "Стрел: " + n), Hud.Center);
         GUI.Label(new Rect(0, Screen.height - 88, Screen.width, 22),
                   "зажми ЛКМ — натянуть, отпусти — выстрел   (до золотого прицела — мощный, пригвождает к стене)   свои стрелы подбираются", Hud.CenterTiny);
         if (Time.time < noArrowsMsgUntil || (n == 0 && drawing))

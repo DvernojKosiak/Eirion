@@ -30,9 +30,21 @@ public class PlayerHealth : MonoBehaviour
     public bool IsDead { get; private set; }
     public bool IsBlocking { get; private set; }
     public float BlockJolt => blockFlash;            // для анимации меча: удар пришёлся в блок
-    public bool InParryWindow => IsBlocking && Time.time - blockStart < parryWindow;
-    public float parryWindow = 0.3f;                 // поставил блок за столько секунд до удара — парирование
-    public float blockAngle = 55f;                   // блок держит только удары спереди (смотри на врага!)
+    public bool InParryWindow => IsBlocking && Time.time - guardSetAt < parryWindow;
+    public float parryWindow = 0.3f;                 // поставил блок (или перевёл меч) за столько секунд до удара — парирование
+    public float blockAngle = 70f;                   // блок держит только удары спереди (смотри на врага!)
+    public float guardFlick = 22f;                   // насколько резко двинуть мышь в блоке, чтобы перевести меч
+
+    // Куда поставлен меч в блоке (как видишь на экране): -1 — слева, 0 — сверху, 1 — справа.
+    // Блок держит только удар с той стороны, куда поставлен меч.
+    public int GuardSide { get; private set; }
+    float guardSetAt = -100f;
+    Vector2 guardAcc;
+    bool guardLookSlow;
+
+    // С какой стороны (на экране) прилетит удар этой твари: -1 слева, 0 сверху, 1 справа
+    public static int StrikeSide(Enemy e) => e.AttackSide == 0 ? 0 : -e.AttackSide;
+    static string SideName(int s) => s == 0 ? "сверху" : s < 0 ? "слева" : "справа";
 
     public static PlayerHealth Local { get; private set; } // здоровье своего игрока
 
@@ -80,29 +92,39 @@ public class PlayerHealth : MonoBehaviour
     {
         if (IsDead) return;
         if (movement != null && movement.IsDodging) { Notice("Уклон!", new Color(0.6f, 0.9f, 1f)); return; }
-        // Блок держит только удар спереди: повернись к врагу прицелом
+        // Блок держит только удар спереди и только с той стороны, куда поставлен меч
         bool facing = true;
+        int side = 0;
+        Vector3 away = -transform.forward;
         Enemy attacker = attackerId >= 0 && EnemyManager.Instance != null ? EnemyManager.Instance.Find(attackerId) : null;
         if (attacker != null)
         {
-            Camera cam = Camera.main;
-            Vector3 f = cam != null ? cam.transform.forward : transform.forward; f.y = 0f;
+            Camera c0 = Camera.main;
+            Vector3 f = c0 != null ? c0.transform.forward : transform.forward; f.y = 0f;
             Vector3 to = attacker.transform.position - transform.position; to.y = 0f;
             facing = to.sqrMagnitude < 0.01f || Vector3.Angle(f, to) <= blockAngle;
+            side = StrikeSide(attacker);
+            if (to.sqrMagnitude > 0.01f) away = -to.normalized;
         }
-        if (IsBlocking && !facing)
+        Camera cam = Camera.main;
+        Vector3 bladePoint = cam != null ? cam.transform.position + cam.transform.forward * 0.7f + cam.transform.right * side * 0.25f : transform.position + Vector3.up * 1.5f;
+
+        if (IsBlocking && (!facing || (attacker != null && GuardSide != side)))
         {
-            Notice("Удар сбоку — блок не держит!", new Color(1f, 0.45f, 0.35f));
+            Notice(!facing ? "Удар сбоку — блок не держит!" : "Удар " + SideName(side) + " — меч не там!", new Color(1f, 0.45f, 0.35f));
             TakeDamage(amount, null, false);
-            PlayerCamera.Shake(Mathf.Clamp(amount / 30f, 0.2f, 0.6f));
+            Hurt(amount, away, side);
             return;
         }
-        if (IsBlocking && attackerId >= 0 && Time.time - blockStart < parryWindow)
+        if (IsBlocking && attackerId >= 0 && InParryWindow)
         {
-            // Парирование!
+            // Парирование: поставил меч точно под удар в последний момент
             Notice("ПАРИРОВАНО!", new Color(1f, 0.85f, 0.3f));
             EnemyManager.RequestParry(attackerId);
-            PlayerCamera.Shake(0.35f);
+            CombatFx.Play(CombatFx.Snd.Parry, bladePoint, 1f);
+            CombatFx.Sparks(bladePoint, new Color(1f, 0.85f, 0.4f), 18);
+            PlayerCamera.Shake(0.3f);
+            PlayerCamera.Punch(new Vector3(-2f, side * -2f, 0f));
             CombatFx.Hitstop(0.12f);
             Stamina = Mathf.Min(maxStamina, Stamina + 10f);
             blockFlash = 1f;
@@ -110,15 +132,29 @@ public class PlayerHealth : MonoBehaviour
         }
         bool blocked = IsBlocking;
         TakeDamage(amount, null, true);
-        if (blocked)
+        if (blocked && IsBlocking)
         {
-            // звон: искры о клинок, меч дёргается
-            Camera cam = Camera.main;
-            if (cam != null) CombatFx.Sparks(cam.transform.position + cam.transform.forward * 0.7f - cam.transform.up * 0.05f, Color.white, 10);
+            // звон, искры о клинок, меч дёргается, тебя чуть отталкивает
+            CombatFx.Play(CombatFx.Snd.Clang, bladePoint, 0.9f);
+            CombatFx.Sparks(bladePoint, Color.white, 10);
             CombatFx.Hitstop(0.05f);
+            if (movement != null) movement.Push(away * 3f, 0.1f);
+            PlayerCamera.Punch(new Vector3(-3f, side * -3f, side * 2f));
+            PlayerCamera.Shake(0.15f);
             Notice("Блок", new Color(0.75f, 0.85f, 1f));
         }
-        PlayerCamera.Shake(blocked ? 0.2f : Mathf.Clamp(amount / 30f, 0.15f, 0.6f));
+        else Hurt(amount, away, side);
+    }
+
+    // Пропустил удар: отбрасывает, голову дёргает в сторону удара, ноги заплетаются
+    void Hurt(float amount, Vector3 away, int side)
+    {
+        float k = Mathf.Clamp(amount / 20f, 0.5f, 1.6f);
+        if (movement != null) movement.Push(away * (4f + 3f * k), 0.3f * k);
+        PlayerCamera.Punch(new Vector3(-6f * k, side * -6f * k, side == 0 ? 0f : side * 9f * k));
+        PlayerCamera.Shake(Mathf.Clamp(amount / 30f, 0.2f, 0.6f));
+        CombatFx.Play(CombatFx.Snd.Hurt, transform.position + Vector3.up * 1.4f, 1f);
+        CombatFx.Hitstop(0.06f);
     }
 
     void Notice(string text, Color c) { notice = text; noticeColor = c; noticeUntil = Time.time + 1f; }
@@ -202,7 +238,18 @@ public class PlayerHealth : MonoBehaviour
         Mouse mouse = Mouse.current;
         bool wantBlock = mouse != null && mouse.rightButton.isPressed && Cursor.lockState == CursorLockMode.Locked &&
                          (hotbar == null || hotbar.Current == Tool.Sword) && Time.time >= blockBrokenUntil && Stamina > 1f;
-        if (wantBlock && !IsBlocking) blockStart = Time.time;
+        if (wantBlock && !IsBlocking) { blockStart = Time.time; guardSetAt = Time.time; GuardSide = 0; guardAcc = Vector2.zero; }
+        if (wantBlock)
+        {
+            // резкое движение мышью переводит меч: влево, вправо или вверх
+            Vector2 d = mouse.delta.ReadValue();
+            guardAcc = guardAcc * Mathf.Exp(-12f * Time.unscaledDeltaTime) + d;
+            int want = GuardSide;
+            if (Mathf.Abs(guardAcc.x) > guardFlick && Mathf.Abs(guardAcc.x) > Mathf.Abs(guardAcc.y)) want = guardAcc.x > 0f ? 1 : -1;
+            else if (guardAcc.y > guardFlick && guardAcc.y > Mathf.Abs(guardAcc.x)) want = 0;
+            if (want != GuardSide) { GuardSide = want; guardSetAt = Time.time; guardAcc = Vector2.zero; }
+        }
+        if (wantBlock != guardLookSlow) { guardLookSlow = wantBlock; PlayerCamera.LookScale = wantBlock ? 0.3f : 1f; } // в блоке мышь переводит меч, камера почти стоит
         IsBlocking = wantBlock;
         if (IsBlocking) lastStaminaUse = Time.time - staminaDelay * 0.5f; // в блоке восстанавливается медленнее
 
@@ -239,8 +286,10 @@ public class PlayerHealth : MonoBehaviour
                 float r = 70f + i * 9f, size = 7f + i * 2f + p * 4f;
                 Hud.Fill(new Rect(cx + dir.x * r - size / 2f, cy + dir.y * r - size / 2f, size, size), c, size / 2f);
             }
-            string from = e.AttackSide == 0 ? "сверху" : e.AttackSide < 0 ? "справа" : "слева";
+            int ss = StrikeSide(e);
+            string from = SideName(ss);
             Color old = GUI.color; GUI.color = c;
+            if (IsBlocking && GuardSide == ss) { GUI.color = new Color(0.6f, 0.9f, 1f); from += " — меч там"; }
             GUI.Label(new Rect(cx + dir.x * 120f - 60f, cy + dir.y * 120f - 10f, 120f, 20f), from, Hud.CenterTiny);
             GUI.color = old;
         }
@@ -261,14 +310,13 @@ public class PlayerHealth : MonoBehaviour
             Color c = InParryWindow ? new Color(1f, 0.8f, 0.3f, 0.95f) : new Color(0.65f, 0.8f, 1f, 0.85f);
             c = Color.Lerp(c, Color.white, blockFlash);
             float gap = 34f + blockFlash * 8f;
-            Hud.Fill(new Rect(cx - gap - 4, cy - 26, 4, 52), c, 2);
-            Hud.Fill(new Rect(cx + gap, cy - 26, 4, 52), c, 2);
-            Hud.Fill(new Rect(cx - gap - 4, cy - 26, 12, 4), c, 2);
-            Hud.Fill(new Rect(cx - gap - 4, cy + 22, 12, 4), c, 2);
-            Hud.Fill(new Rect(cx + gap - 8, cy - 26, 12, 4), c, 2);
-            Hud.Fill(new Rect(cx + gap - 8, cy + 22, 12, 4), c, 2);
+            Color dim = new Color(c.r, c.g, c.b, 0.18f);
+            // три стороны блока: яркая — куда поставлен меч
+            Hud.Fill(new Rect(cx - gap - 6, cy - 26, 6, 52), GuardSide < 0 ? c : dim, 3);
+            Hud.Fill(new Rect(cx + gap, cy - 26, 6, 52), GuardSide > 0 ? c : dim, 3);
+            Hud.Fill(new Rect(cx - 26, cy - gap - 6, 52, 6), GuardSide == 0 ? c : dim, 3);
             Color old = GUI.color; GUI.color = c;
-            GUI.Label(new Rect(0, cy + 30, Screen.width, 22), InParryWindow ? "парирование!" : "блок — держи врага в прицеле", Hud.CenterTiny);
+            GUI.Label(new Rect(0, cy + 44, Screen.width, 22), InParryWindow ? "парирование!" : "блок " + SideName(GuardSide) + " — дёрни мышь влево / вправо / вверх под удар", Hud.CenterTiny);
             GUI.color = old;
         }
 

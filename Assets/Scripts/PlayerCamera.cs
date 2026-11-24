@@ -40,6 +40,10 @@ public class PlayerCamera : MonoBehaviour
     static float shake;
     public static void Shake(float amount) { shake = Mathf.Max(shake, amount); }
 
+    // Толчок камеры от удара: голову резко дёргает (градусы: x — кивок, y — поворот, z — завал вбок) и она возвращается
+    static Vector3 punch, punchVel;
+    public static void Punch(Vector3 degrees) { punchVel += degrees * 28f; }
+
     // Насколько послушна мышь (меньше 1 — «тяжело», например клинок застрял в теле)
     public static float LookScale = 1f;
 
@@ -103,8 +107,10 @@ public class PlayerCamera : MonoBehaviour
             // при перекате голова «ныряет» вниз
             if (movement == null && playerBody != null) movement = playerBody.GetComponent<PlayerMovement>();
             float roll = movement != null ? movement.DodgeRoll : 0f;
-            cameraObject.localPosition = Vector3.down * Mathf.Sin(roll * Mathf.PI) * 0.6f;
-            cameraObject.localRotation = ShakeRotation();
+            float low = movement != null ? movement.SlideLow : 0f;
+            float lowS = low * low * (3f - 2f * low);
+            cameraObject.localPosition = Vector3.down * (Mathf.Sin(roll * Mathf.PI) * 0.6f + lowS * 0.75f);
+            cameraObject.localRotation = ShakeRotation() * Quaternion.Euler(-4f * lowS, 0f, -6f * lowS); // в подкате голова низко и чуть набок
             return;
         }
 
@@ -134,13 +140,18 @@ public class PlayerCamera : MonoBehaviour
 
     Quaternion ShakeRotation()
     {
-        if (shake <= 0.001f) return Quaternion.identity;
+        // пружина толчка: резко отклоняется, плавно возвращается
+        float udt = Mathf.Min(Time.unscaledDeltaTime, 0.05f);
+        punchVel += (-punch * 220f - punchVel * 22f) * udt;
+        punch += punchVel * udt;
+        Quaternion pq = Quaternion.Euler(punch);
+        if (shake <= 0.001f) return pq;
         float t = Time.unscaledTime * 35f;
         Quaternion q = Quaternion.Euler((Mathf.PerlinNoise(t, 0f) - 0.5f) * 6f * shake,
                                         (Mathf.PerlinNoise(0f, t) - 0.5f) * 6f * shake,
                                         (Mathf.PerlinNoise(t, t) - 0.5f) * 4f * shake);
         shake = Mathf.MoveTowards(shake, 0f, Time.unscaledDeltaTime * 3f);
-        return q;
+        return pq * q;
     }
 
     void LockCursor(bool locked)

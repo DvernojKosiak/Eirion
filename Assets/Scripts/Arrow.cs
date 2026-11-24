@@ -121,6 +121,7 @@ public class Arrow : MonoBehaviour
         }
         e.LocalReact((int)bp.type, dir, 0.6f);
         CombatFx.Ichor(h.point, -dir, heavy ? 10 : 5);
+        CombatFx.Play(CombatFx.Snd.Flesh, h.point, 0.8f, 1.3f);
         if (mine) CombatFx.Hitstop(heavy ? 0.05f : 0.02f);
 
         // входит в тело: чем быстрее летела, тем глубже
@@ -138,6 +139,7 @@ public class Arrow : MonoBehaviour
         if (body != null && !body.isKinematic) body.AddForceAtPosition(velocity * 0.02f, h.point, ForceMode.Impulse);
 
         CombatFx.Sparks(h.point, new Color(0.8f, 0.7f, 0.5f), 3);
+        CombatFx.Play(CombatFx.Snd.Thunk, h.point, 0.7f);
 
         if (speed < 9f || along < 0.3f)
         {

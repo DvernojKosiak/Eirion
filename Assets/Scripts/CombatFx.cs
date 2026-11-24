@@ -16,15 +16,24 @@ public static class CombatFx
         Time.timeScale = 0.15f;
     }
 
+    // Замедление «как в кино» на важных моментах (добил, отрубил голову): duration — реальные секунды
+    static float slowUntil, slowScale = 1f;
+    public static void SlowMo(float duration, float scale)
+    {
+        slowUntil = Mathf.Max(slowUntil, Time.unscaledTime + duration);
+        slowScale = Mathf.Clamp(scale, 0.1f, 1f);
+    }
+
     // Вызывать каждый кадр (это делает PlayerCombat). Время возвращается плавно.
     public static void Tick()
     {
-        if (!stopping) return;
-        if (Time.unscaledTime >= stopUntil)
-        {
-            Time.timeScale = Mathf.MoveTowards(Time.timeScale, 1f, Time.unscaledDeltaTime * 12f);
-            if (Time.timeScale >= 1f) { stopping = false; readyAt = Time.unscaledTime + 0.15f; }
-        }
+        float now = Time.unscaledTime;
+        bool slow = now < slowUntil;
+        if (!stopping && !slow && Time.timeScale >= 1f) return;
+        if (stopping && now < stopUntil) return;            // замер удара держится
+        float target = slow ? slowScale : 1f;
+        Time.timeScale = Mathf.MoveTowards(Time.timeScale, target, Time.unscaledDeltaTime * (Time.timeScale > target ? 10f : (slow ? 12f : 3f)));
+        if (Time.timeScale >= 1f && stopping) { stopping = false; readyAt = now + 0.15f; }
     }
 
     static Material spark;

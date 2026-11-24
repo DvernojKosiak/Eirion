@@ -397,7 +397,7 @@ public class PlayerCombat : MonoBehaviour
         HitType type = swingS.y < -0.6f ? HitType.Chop : HitType.Slash;
         bool brute = e.kind == EnemyKind.Brute;
         bool bounce = brute && swingPower < 0.6f && (bp.type == BodyPartType.Torso || bp.type == BodyPartType.Head);
-        bool embed = swingHeavy && !bounce;
+        bool embed = swingPower >= 0.5f && !bounce;   // сильный замах — клинок вонзается в тело
 
         EnemyManager.RequestHit(e, new HitInfo { damage = swingDamage, dir = motion, part = bp.type, type = type, heavy = swingHeavy, embed = embed && !brute });
         e.LocalReact((int)bp.type, motion, Mathf.Lerp(0.7f, 1.3f, swingPower));
@@ -409,6 +409,14 @@ public class PlayerCombat : MonoBehaviour
         CombatFx.Play(swingPower > 0.6f ? CombatFx.Snd.FleshHeavy : CombatFx.Snd.Flesh, point, Mathf.Lerp(0.75f, 1f, swingPower), Mathf.Lerp(1.05f, 0.85f, swingPower));
         ShowPart(bp.type);
 
+        // похоже, этот удар добивает — замедление и сильный толчок, как в кино
+        float est = swingDamage * (bp.type == BodyPartType.Head ? 1.8f : 1f);
+        if (e.HealthFraction > 0f && est >= e.HealthFraction * e.maxHealth)
+        {
+            CombatFx.SlowMo(0.45f, 0.3f);
+            PlayerCamera.Punch(new Vector3(-swingS.y * 4f, swingS.x * 4f, -swingS.x * 3f));
+        }
+
         if (bounce) { CombatFx.Play(CombatFx.Snd.Thunk, point, 1f, 0.6f); Bounce("Отскок! Громилу — тяжёлым ударом (зажми ЛКМ) или по ногам"); return true; }
         if (embed)
         {
@@ -416,7 +424,8 @@ public class PlayerCombat : MonoBehaviour
             embedEnemy = e;
             embedPart = bp;
             embedLocal = bp.transform.InverseTransformPoint(point + motion * 0.15f);
-            embedUntil = Time.time + embedTime;
+            embedUntil = Time.time + Mathf.Lerp(0.3f, embedTime, (swingPower - 0.5f) * 2f);
+            CombatFx.SlowMo(0.25f, 0.45f);
             swinging = false;
             queued = false;
             return true;

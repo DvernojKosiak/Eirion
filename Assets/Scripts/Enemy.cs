@@ -264,10 +264,14 @@ public class Enemy : MonoBehaviour
             case State.Impaled: HoldOnBlade(); return;
             case State.Pinned: StayPinned(); return;
             case State.Thrown: FlyCheck(); return;
+            case State.Recover:
+                // удар с шагом вперёд — вкладывается всем телом
+                MoveBody(transform.forward, lunge > 0.6f && LegsLost == 0 ? 4.5f : 0f);
+                if (Time.time >= stateUntil) SetState(State.Move, 0f);
+                return;
             case State.Down:
             case State.Flinch:
             case State.Stagger:
-            case State.Recover:
             case State.Kneel:
                 MoveBody(Vector3.zero, 0f);
                 if (Time.time >= stateUntil) SetState(State.Move, 0f);
@@ -475,7 +479,9 @@ public class Enemy : MonoBehaviour
         }
         if (cc.isGrounded && verticalVelocity < 0f) verticalVelocity = -2f;
         verticalVelocity += -20f * Time.deltaTime;
-        Vector3 v = dir * moveSpeed + sep * 3f + Vector3.up * verticalVelocity + knock;
+        // разгон и торможение, а не мгновенный старт — движется как тело с весом
+        moveVel = Vector3.Lerp(moveVel, dir * moveSpeed, 1f - Mathf.Exp(-7f * Time.deltaTime));
+        Vector3 v = moveVel + sep * 3f + Vector3.up * verticalVelocity + knock;
         knock = Vector3.Lerp(knock, Vector3.zero, 1f - Mathf.Exp(-5f * Time.deltaTime)); // плавно гаснет — тело «тяжёлое»
         cc.Move(v * Time.deltaTime);
     }
@@ -1098,6 +1104,7 @@ public class Enemy : MonoBehaviour
 
     // Расплющило (у копий — через EnemyManager.Impact)
     public void Squash() { squash = 1f; }
+    Vector3 moveVel;
 
     Vector3 recoilRot, recoilRotVel, recoilPos, recoilPosVel; // отдача всего тела от удара
     float hitShake;
@@ -1232,19 +1239,32 @@ public class Enemy : MonoBehaviour
             {
                 case State.WindUp:
                 {
-                    // заносит лапу: левую, правую или обе над головой — видно, откуда прилетит удар
+                    // заносит лапу: сбоку — отводит руку в сторону и назад (ударит наотмашь), сверху — обе над головой
                     bool raise = AttackSide == 0 || (AttackSide < 0) == (bp.type == BodyPartType.ArmL);
-                    if (arm) e = raise ? new Vector3(-150f, 0f, AttackSide == 0 ? 0f : 35f * side) : new Vector3(-30f, 0f, 0f);
-                    if (bp.type == BodyPartType.Torso) e = new Vector3(-22f, AttackSide * -25f, 0f);
+                    float wp = WindProgress;
+                    if (arm)
+                    {
+                        if (!raise) e = new Vector3(-30f, 0f, 0f);
+                        else if (AttackSide == 0) e = new Vector3(Mathf.Lerp(-90f, -165f, wp), 0f, 0f);
+                        else e = new Vector3(0f, Mathf.Lerp(-10f, -65f, wp) * side, -85f * side);
+                    }
+                    if (bp.type == BodyPartType.Torso)
+                        e = AttackSide == 0 ? new Vector3(Mathf.Lerp(-10f, -28f, wp), 0f, 0f)            // выгибается назад
+                                            : new Vector3(-10f, AttackSide * Mathf.Lerp(15f, 40f, wp), 0f); // плечо уходит назад
                     break;
                 }
                 case State.Recover:
                 {
-                    // удар: лапа проносится сверху вниз и поперёк
+                    // удар: сбоку — лапа проносится вбок поперёк (наотмашь), сверху — обрушивается вниз
                     bool hit = AttackSide == 0 || (AttackSide < 0) == (bp.type == BodyPartType.ArmL);
-                    float k = lunge * lunge;
-                    if (arm && hit) e = new Vector3(Mathf.Lerp(35f, -150f, k), 0f, Mathf.Lerp(-30f * side, 35f * side, k) * (AttackSide == 0 ? 0f : 1f));
-                    if (bp.type == BodyPartType.Torso) e = new Vector3(Mathf.Lerp(15f, -22f, k), Mathf.Lerp(AttackSide * 25f, AttackSide * -25f, k), 0f);
+                    float u = 1f - lunge;
+                    float su = 1f - (1f - u) * (1f - u) * (1f - u);  // резко, с хлёстом в начале
+                    if (arm && hit)
+                        e = AttackSide == 0 ? new Vector3(Mathf.Lerp(-165f, 35f, su), 0f, 0f)
+                                            : new Vector3(0f, Mathf.Lerp(-65f, 115f, su) * side, -85f * side);
+                    if (bp.type == BodyPartType.Torso)
+                        e = AttackSide == 0 ? new Vector3(Mathf.Lerp(-28f, 24f, su), 0f, 0f)
+                                            : new Vector3(-6f, AttackSide * Mathf.Lerp(40f, -45f, su), 0f);
                     break;
                 }
                 case State.Grabbed:
@@ -1292,7 +1312,10 @@ public class Enemy : MonoBehaviour
     {
         if (dead) return;
         dead = true;
-        Vector3 v = (rb != null ? rb.linearVelocity : Vector3.zero) + lastHitDir * 1.6f + Vector3.up * 0.6f;
+        // смертельный удар отбрасывает тело — эффектно, по направлению удара
+        Vector3 hd = lastHitDir; hd.y = Mathf.Max(hd.y, 0f);
+        Vector3 v = (rb != null ? rb.linearVelocity : Vector3.zero) + hd * 4.5f + Vector3.up * 2.2f;
+        CombatFx.Play(CombatFx.Snd.Fall, transform.position, 0.9f, 0.8f);
         GameObject corpse = new GameObject("Corpse");
         Rigidbody torsoRb = null;
         var limbs = new List<BodyPart>();

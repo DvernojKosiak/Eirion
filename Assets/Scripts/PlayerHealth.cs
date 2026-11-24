@@ -287,6 +287,15 @@ public class PlayerHealth : MonoBehaviour
                 Hud.Fill(new Rect(cx + dir.x * r - size / 2f, cy + dir.y * r - size / 2f, size, size), c, size / 2f);
             }
             int ss = StrikeSide(e);
+            // красная полоса там, откуда придёт удар (на том же месте, где полоска блока) — поставь туда меч
+            if (Vector3.Angle(f, -to) < 60f)
+            {
+                float g = 50f - 8f * p, len = 40f + 30f * p, th = 5f + 4f * p;
+                Color bar = new Color(1f, 0.2f, 0.1f, 0.3f + 0.65f * p);
+                if (ss < 0) Hud.Fill(new Rect(cx - g - th, cy - len / 2f, th, len), bar, th / 2f);
+                else if (ss > 0) Hud.Fill(new Rect(cx + g, cy - len / 2f, th, len), bar, th / 2f);
+                else Hud.Fill(new Rect(cx - len / 2f, cy - g - th, len, th), bar, th / 2f);
+            }
             string from = SideName(ss);
             Color old = GUI.color; GUI.color = c;
             if (IsBlocking && GuardSide == ss) { GUI.color = new Color(0.6f, 0.9f, 1f); from += " — меч там"; }

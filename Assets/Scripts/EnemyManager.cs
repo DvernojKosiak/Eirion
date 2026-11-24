@@ -268,6 +268,10 @@ public class EnemyManager : MonoBehaviour
     {
         if (code <= 0 || code >= Callout.Text.Length) return;
         ShowCallout(Callout.Text[code]);
+        // эффектные моменты — как в кино, на миг замедляется время
+        if (code == Callout.Execution || code == Callout.Head || code == Callout.Arm || code == Callout.Leg || code == Callout.Finisher ||
+            code == Callout.Spikes || code == Callout.Pinned || code == Callout.Impaled || code == Callout.Sack)
+            CombatFx.SlowMo(code == Callout.Execution || code == Callout.Head ? 0.6f : 0.35f, 0.3f);
     }
     public static void ShowCallout(string text)
     {

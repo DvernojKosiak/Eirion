@@ -38,7 +38,8 @@ public class EnemyManager : MonoBehaviour
 
     const string MsgState = "E.enemies", MsgHitReq = "E.enemyHit", MsgHurt = "E.hurt", MsgWaveReq = "E.waveReq", MsgSpit = "E.spit",
                  MsgParryReq = "E.parry", MsgGrabReq = "E.grab", MsgGrabRes = "E.grabRes", MsgThrowReq = "E.throw", MsgFx = "E.fx", MsgReact = "E.react",
-                 MsgArrowReq = "E.arrowReq", MsgArrow = "E.arrow";
+                 MsgArrowReq = "E.arrowReq", MsgArrow = "E.arrow",
+                 MsgTkReq = "E.tkReq", MsgTkRes = "E.tkRes", MsgTkMove = "E.tkMove", MsgSpellReq = "E.spellReq", MsgSpell = "E.spell";
 
     readonly Dictionary<int, Enemy> enemies = new Dictionary<int, Enemy>();
     readonly List<PlayerInfo> players = new List<PlayerInfo>();
@@ -268,10 +269,6 @@ public class EnemyManager : MonoBehaviour
     {
         if (code <= 0 || code >= Callout.Text.Length) return;
         ShowCallout(Callout.Text[code]);
-        // эффектные моменты — как в кино, на миг замедляется время
-        if (code == Callout.Execution || code == Callout.Head || code == Callout.Arm || code == Callout.Leg || code == Callout.Finisher ||
-            code == Callout.Spikes || code == Callout.Pinned || code == Callout.Impaled || code == Callout.Sack)
-            CombatFx.SlowMo(code == Callout.Execution || code == Callout.Head ? 0.6f : 0.35f, 0.3f);
     }
     public static void ShowCallout(string text)
     {
@@ -382,6 +379,56 @@ public class EnemyManager : MonoBehaviour
             float dist = Vector3.Distance(PlayerHealth.Local.transform.position, at);
             if (dist < 14f) PlayerCamera.Shake(strength * 0.8f * (1f - dist / 14f));
         }
+    }
+
+    // ---------- Телекинез посоха ----------
+    public static event System.Action<int, bool> TkResult;
+
+    public static void RequestTk(Enemy e)
+    {
+        if (Instance == null || e == null) return;
+        if (Net.IsHost) { Instance.ServerTk(e.id, Net.LocalId); return; }
+        FastBufferWriter w = Net.Writer(16);
+        try { w.WriteValueSafe(e.id); Net.ToHost(MsgTkReq, w); } finally { w.Dispose(); }
+    }
+
+    void ServerTk(int id, ulong by)
+    {
+        Enemy e = Find(id);
+        Transform t = PlayerTransform(by);
+        bool ok = e != null && e.GrabTk(t, by);
+        if (by == Net.LocalId) { TkResult?.Invoke(id, ok); return; }
+        FastBufferWriter w = Net.Writer(16);
+        try { w.WriteValueSafe(id); w.WriteValueSafe(ok); Net.ToClient(MsgTkRes, by, w); } finally { w.Dispose(); }
+    }
+
+    // Куда тянуть поднятую тварь (часто, без гарантии доставки — следующая точка всё равно придёт)
+    public static void TkMove(int enemyId, Vector3 point)
+    {
+        if (Instance == null) return;
+        if (Net.IsHost) { Instance.Find(enemyId)?.SetTkPoint(point, Net.LocalId); return; }
+        FastBufferWriter w = Net.Writer(24);
+        try { w.WriteValueSafe(enemyId); w.WriteValueSafe(point); Net.ToHost(MsgTkMove, w, NetworkDelivery.Unreliable); } finally { w.Dispose(); }
+    }
+
+    // ---------- Заклинания и выстрелы (огненный шар, молния, луч бластера) ----------
+    // Тот, кто стреляет, сам решает попадания; остальным — только картинка
+    public static void CastSpell(int kind, Vector3 a, Vector3 b, float power, Transform shooterRoot)
+    {
+        Magic.Spawn(kind, a, b, power, true, shooterRoot);
+        if (!Net.Online) return;
+        if (Net.IsHost) SendSpell(kind, a, b, power, Net.LocalId);
+        else
+        {
+            FastBufferWriter w = Net.Writer(48);
+            try { w.WriteValueSafe(kind); w.WriteValueSafe(a); w.WriteValueSafe(b); w.WriteValueSafe(power); Net.ToHost(MsgSpellReq, w); } finally { w.Dispose(); }
+        }
+    }
+
+    static void SendSpell(int kind, Vector3 a, Vector3 b, float power, ulong shooter)
+    {
+        FastBufferWriter w = Net.Writer(56);
+        try { w.WriteValueSafe(kind); w.WriteValueSafe(a); w.WriteValueSafe(b); w.WriteValueSafe(power); w.WriteValueSafe(shooter); Net.ToAllClients(MsgSpell, w); } finally { w.Dispose(); }
     }
 
     // ---------- Стрелы ----------
@@ -504,6 +551,28 @@ public class EnemyManager : MonoBehaviour
         {
             r.ReadValueSafe(out Vector3 from); r.ReadValueSafe(out Vector3 to);
             if (!Net.IsHost) Projectile.Launch(from, to, false, 0f);
+        });
+        cmm.RegisterNamedMessageHandler(MsgTkReq, (sender, r) => { r.ReadValueSafe(out int id); if (Net.IsHost) ServerTk(id, sender); });
+        cmm.RegisterNamedMessageHandler(MsgTkRes, (sender, r) => { r.ReadValueSafe(out int id); r.ReadValueSafe(out bool ok); TkResult?.Invoke(id, ok); });
+        cmm.RegisterNamedMessageHandler(MsgTkMove, (sender, r) =>
+        {
+            r.ReadValueSafe(out int id); r.ReadValueSafe(out Vector3 p);
+            if (Net.IsHost) Find(id)?.SetTkPoint(p, sender);
+        });
+        cmm.RegisterNamedMessageHandler(MsgSpellReq, (sender, r) =>
+        {
+            r.ReadValueSafe(out int k); r.ReadValueSafe(out Vector3 a); r.ReadValueSafe(out Vector3 b); r.ReadValueSafe(out float pw);
+            if (!Net.IsHost) return;
+            Transform t = PlayerTransform(sender);
+            Magic.Spawn(k, a, b, pw, false, t != null ? t.root : null);
+            SendSpell(k, a, b, pw, sender);
+        });
+        cmm.RegisterNamedMessageHandler(MsgSpell, (sender, r) =>
+        {
+            r.ReadValueSafe(out int k); r.ReadValueSafe(out Vector3 a); r.ReadValueSafe(out Vector3 b); r.ReadValueSafe(out float pw); r.ReadValueSafe(out ulong shooter);
+            if (shooter == Net.LocalId) return;
+            Transform t = PlayerTransform(shooter);
+            Magic.Spawn(k, a, b, pw, false, t != null ? t.root : null);
         });
         cmm.RegisterNamedMessageHandler(MsgArrowReq, (sender, r) =>
         {

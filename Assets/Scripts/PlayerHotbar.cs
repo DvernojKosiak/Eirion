@@ -1,9 +1,9 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-public enum Tool { Sword, Hammer, Axe, Pickaxe, Bow }
+public enum Tool { Sword, Hammer, Axe, Pickaxe, Bow, Staff, Blaster }
 
-// Панель предметов внизу экрана: 1 — меч, 2 — молот, 3 — топор, 4 — кирка, 5 — лук.
+// Панель предметов внизу экрана: 1 — меч, 2 — молот, 3 — топор, 4 — кирка, 5 — лук, 6 — посох, 7 — бластер.
 // Показывает в руке нужную модель.
 public class PlayerHotbar : MonoBehaviour
 {
@@ -12,8 +12,10 @@ public class PlayerHotbar : MonoBehaviour
     public Transform axeModel;
     public Transform pickaxeModel;
     public Transform bowModel;
+    public Transform staffModel;
+    public Transform blasterModel;
 
-    static readonly string[] names = { "Меч", "Молот", "Топор", "Кирка", "Лук" };
+    static readonly string[] names = { "Меч", "Молот", "Топор", "Кирка", "Лук", "Посох", "Бластер" };
 
     public Tool Current { get; private set; } = Tool.Sword;
 
@@ -28,6 +30,8 @@ public class PlayerHotbar : MonoBehaviour
         if (kb.digit3Key.wasPressedThisFrame) Select(Tool.Axe);
         if (kb.digit4Key.wasPressedThisFrame) Select(Tool.Pickaxe);
         if (kb.digit5Key.wasPressedThisFrame) Select(Tool.Bow);
+        if (kb.digit6Key.wasPressedThisFrame) Select(Tool.Staff);
+        if (kb.digit7Key.wasPressedThisFrame) Select(Tool.Blaster);
     }
 
     void Select(Tool t) { Current = t; ShowTool(t); }
@@ -42,6 +46,8 @@ public class PlayerHotbar : MonoBehaviour
             case Tool.Hammer: return hammerModel;
             case Tool.Axe: return axeModel;
             case Tool.Bow: return bowModel;
+            case Tool.Staff: return staffModel;
+            case Tool.Blaster: return blasterModel;
             default: return pickaxeModel;
         }
     }

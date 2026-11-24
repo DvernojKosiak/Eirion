@@ -1175,7 +1175,30 @@ public static class EirionSceneBuilder
         Part(bow.transform, PrimitiveType.Cube, new Vector3(0f, -0.32f, -0.05f), new Vector3(0.035f, 0.46f, 0.035f), darkWood, new Vector3(-18f, 0f, 0f), false);
         bow.SetActive(false);
 
-        foreach (GameObject tool in new[] { sword, hammer, axe, pick, bow })
+        // Посох с волшебным камнем (лайлилиум) на верхушке
+        GameObject staff = new GameObject("Staff");
+        staff.transform.SetParent(pivot.transform, false);
+        staff.transform.localPosition = new Vector3(0.36f, -0.55f, 0.62f);
+        staff.transform.localRotation = Quaternion.Euler(-8f, 0f, -6f);
+        Part(staff.transform, PrimitiveType.Cube, new Vector3(0f, 0.35f, 0f), new Vector3(0.045f, 1.7f, 0.045f), darkWood, Vector3.zero, false);
+        Part(staff.transform, PrimitiveType.Cube, new Vector3(0.05f, 1.16f, 0f), new Vector3(0.03f, 0.2f, 0.03f), darkWood, new Vector3(0f, 0f, -20f), false);
+        Part(staff.transform, PrimitiveType.Cube, new Vector3(-0.05f, 1.16f, 0f), new Vector3(0.03f, 0.2f, 0.03f), darkWood, new Vector3(0f, 0f, 20f), false);
+        Part(staff.transform, PrimitiveType.Cube, new Vector3(0f, 1.25f, 0f), new Vector3(0.11f, 0.11f, 0.11f), crystal, new Vector3(45f, 0f, 45f), false).name = "Stone";
+        staff.SetActive(false);
+
+        // Бластер: корпус, ствол, рукоять и светящийся аккумулятор сбоку
+        GameObject blaster = new GameObject("Blaster");
+        blaster.transform.SetParent(pivot.transform, false);
+        blaster.transform.localPosition = new Vector3(0.28f, -0.28f, 0.55f);
+        Material cell = Mat("BlasterCell", new Color(0.4f, 0.9f, 1f), new Color(0.3f, 0.9f, 1f) * 3f);
+        Part(blaster.transform, PrimitiveType.Cube, Vector3.zero, new Vector3(0.1f, 0.13f, 0.34f), iron, Vector3.zero, false);
+        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0f, 0.02f, 0.27f), new Vector3(0.06f, 0.06f, 0.22f), steel, Vector3.zero, false);
+        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0f, 0.02f, 0.39f), new Vector3(0.08f, 0.08f, 0.03f), iron, Vector3.zero, false);
+        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0f, -0.13f, -0.07f), new Vector3(0.07f, 0.17f, 0.08f), iron, new Vector3(15f, 0f, 0f), false);
+        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0.062f, 0.01f, -0.02f), new Vector3(0.03f, 0.06f, 0.16f), cell, Vector3.zero, false).name = "Cell";
+        blaster.SetActive(false);
+
+        foreach (GameObject tool in new[] { sword, hammer, axe, pick, bow, staff, blaster })
             foreach (Renderer r in tool.GetComponentsInChildren<Renderer>(true))
                 r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
@@ -1185,10 +1208,15 @@ public static class EirionSceneBuilder
         hotbar.axeModel = axe.transform;
         hotbar.pickaxeModel = pick.transform;
         hotbar.bowModel = bow.transform;
+        hotbar.staffModel = staff.transform;
+        hotbar.blasterModel = blaster.transform;
 
         Inventory inventory = player.AddComponent<Inventory>();
         PlayerCombat combat = player.AddComponent<PlayerCombat>();
         PlayerBow bowCtl = player.AddComponent<PlayerBow>();
+        PlayerStaff staffCtl = player.AddComponent<PlayerStaff>();
+        PlayerBlaster blasterCtl = player.AddComponent<PlayerBlaster>();
+        player.AddComponent<PlayerBody>();   // руки и ноги — у всех игроков (видно и чужих)
         PlayerBuilder builder = player.AddComponent<PlayerBuilder>();
         builder.ghostMaterial = ghost;
         builder.pieces = catalog.FindAll(p => p.buildable);
@@ -1196,7 +1224,7 @@ public static class EirionSceneBuilder
         PlayerHealth health = player.AddComponent<PlayerHealth>();
 
         // Управление работает только у своего игрока — включит NetworkPlayer
-        Behaviour[] ownerOnly = { movement, pcam, hotbar, inventory, combat, bowCtl, builder, interact, health };
+        Behaviour[] ownerOnly = { movement, pcam, hotbar, inventory, combat, bowCtl, staffCtl, blasterCtl, builder, interact, health };
         foreach (Behaviour b in ownerOnly) b.enabled = false;
 
         NetworkPlayer np = player.AddComponent<NetworkPlayer>();

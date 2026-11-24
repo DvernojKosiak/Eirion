@@ -6,7 +6,7 @@ public enum EnemyKind { Crawler, Runner, Brute, Spitter }
 // Каким движением ударили. Направление удара выбирается мышью (см. PlayerCombat).
 //   Slash — рубящий вбок, Chop — сверху вниз, Uppercut — снизу вверх, Thrust — выпад (колющий),
 //   Cross — два рубящих крест-накрест, RipOut — вырвать застрявший клинок.
-public enum HitType { Slash, Chop, Uppercut, Thrust, Kick, Tool, RipOut, Cross, Arrow, Trip }
+public enum HitType { Slash, Chop, Uppercut, Thrust, Kick, Tool, RipOut, Cross, Arrow, Trip, Fire, Lightning, Blaster }
 
 // Всё про один удар
 public struct HitInfo
@@ -109,6 +109,12 @@ public class Enemy : MonoBehaviour
     float stateUntil;
     float circleSign;
     Transform holder;
+    bool telekinetic;                 // держат посохом на расстоянии, а не руками
+    Vector3 tkPoint;
+    float burnUntil;                  // горит после огненного шара
+    public bool Burning => Time.time < burnUntil;
+    public void ShowBurn(float duration) { burnUntil = Mathf.Max(burnUntil, Time.time + duration); }
+    float nextFlame;
     Rigidbody rb;
     CapsuleCollider throwCol;
     float thrownAt, lastImpact;
@@ -246,6 +252,9 @@ public class Enemy : MonoBehaviour
     public void Simulate(List<EnemyManager.PlayerInfo> players, Vector3 villageCenter)
     {
         HealthFraction = Mathf.Max(0f, Health / maxHealth);
+
+        // горит: тикает урон
+        if (Burning && Health > 0f) { Health -= 5f * Time.deltaTime; HealthFraction = Mathf.Max(0f, Health / maxHealth); }
 
         // Вращение от бокового удара
         if (Mathf.Abs(twist) > 1f && CurrentState != State.Thrown)
@@ -480,10 +489,11 @@ public class Enemy : MonoBehaviour
         if (cc.isGrounded && verticalVelocity < 0f) verticalVelocity = -2f;
         verticalVelocity += -20f * Time.deltaTime;
         // разгон и торможение, а не мгновенный старт — движется как тело с весом
-        moveVel = Vector3.Lerp(moveVel, dir * moveSpeed, 1f - Mathf.Exp(-7f * Time.deltaTime));
+        float mdt = Time.deltaTime * TS;
+        moveVel = Vector3.Lerp(moveVel, dir * moveSpeed, 1f - Mathf.Exp(-7f * mdt));
         Vector3 v = moveVel + sep * 3f + Vector3.up * verticalVelocity + knock;
-        knock = Vector3.Lerp(knock, Vector3.zero, 1f - Mathf.Exp(-5f * Time.deltaTime)); // плавно гаснет — тело «тяжёлое»
-        cc.Move(v * Time.deltaTime);
+        knock = Vector3.Lerp(knock, Vector3.zero, 1f - Mathf.Exp(-5f * mdt)); // плавно гаснет — тело «тяжёлое»
+        cc.Move(v * mdt);
     }
 
     // Отброшенная тварь врезалась в стену — расплющило
@@ -685,6 +695,23 @@ public class Enemy : MonoBehaviour
                     Interrupt(State.Stagger, CurrentState == State.Kneel ? 1.0f : 0.5f);
                 }
                 else BeginThrow(dir * 9f + Vector3.up * 3.5f, 2f);
+                break;
+            case HitType.Fire:
+                // огненный шар: взрывом отбрасывает, тело горит ещё пару секунд
+                burnUntil = Time.time + (h.heavy ? 4f : 2.5f);
+                if (!brute && h.heavy) { BeginThrow(dir * 7f + Vector3.up * 4f, 3f); break; }
+                Knock(dir * (brute ? 2f : 6f));
+                Interrupt(State.Stagger, brute ? 0.3f : 0.6f);
+                break;
+            case HitType.Lightning:
+                // молния: трясёт и оглушает
+                Interrupt(State.Stagger, brute ? 0.8f : 1.6f);
+                Knock(dir * 1.5f);
+                break;
+            case HitType.Blaster:
+                // луч света прожигает: больно, но почти не толкает
+                if (!brute) Interrupt(State.Flinch, 0.15f);
+                Knock(dir * 0.6f);
                 break;
             case HitType.Trip:
                 // подкат по ногам: обычная тварь падает, громила только шатается
@@ -912,9 +939,49 @@ public class Enemy : MonoBehaviour
         return true;
     }
 
+    // Посох поднимает тварь телекинезом. Громилу тоже можно, но он тяжёлый и вырывается быстро.
+    public bool GrabTk(Transform by, ulong ownerId)
+    {
+        if (climbing || CurrentState == State.Thrown || CurrentState == State.Grabbed || OnBlade || by == null) return false;
+        holder = by;
+        HeldBy = (int)ownerId;
+        telekinetic = true;
+        tkPoint = transform.position + Vector3.up * 1.2f;
+        if (cc != null) cc.enabled = false;
+        SetState(State.Grabbed, kind == EnemyKind.Brute ? 1.3f : 2.8f); // столько сможет удержать, потом вырвется
+        return true;
+    }
+
+    public void SetTkPoint(Vector3 p, ulong by) { if (telekinetic && HeldBy == (int)by) tkPoint = p; }
+
     void HoldInHands()
     {
         if (holder == null) { Release(); return; }
+        if (telekinetic)
+        {
+            // тварь сопротивляется: дёргается, тянет вниз; громила почти не отрывается от земли
+            bool brute = kind == EnemyKind.Brute;
+            float t = Time.time;
+            Vector3 tug = new Vector3(Mathf.PerlinNoise(t * 2.3f, id) - 0.5f, Mathf.PerlinNoise(id, t * 2.1f) - 0.6f, Mathf.PerlinNoise(t * 1.7f, id * 2f) - 0.5f) * (brute ? 2.2f : 1.2f);
+            Vector3 want = tkPoint + tug;
+            if (brute && Physics.Raycast(transform.position + Vector3.up, Vector3.down, out RaycastHit g, 6f, ~(1 << 2), QueryTriggerInteraction.Ignore))
+                want.y = Mathf.Min(want.y, g.point.y + 0.7f);
+            Vector3 next = Vector3.Lerp(transform.position, want, 1f - Mathf.Exp(-(brute ? 2f : 6f) * Time.deltaTime));
+            // сквозь стены не тащим
+            if (!Physics.Linecast(transform.position + Vector3.up, next + Vector3.up, out RaycastHit wall, ~(1 << 2), QueryTriggerInteraction.Ignore)
+                || wall.collider.GetComponentInParent<Enemy>() == this)
+                transform.position = next;
+            Face(holder.position - transform.position);
+            if (Time.time >= stateUntil)
+            {
+                // вырвалась — падает
+                telekinetic = false;
+                holder = null;
+                HeldBy = -1;
+                BeginThrow(Vector3.down * 2f, 1f);
+            }
+            return;
+        }
         transform.position = holder.position + holder.forward * (1.0f + 0.4f * bodyScale) + Vector3.up * 0.3f;
         Face(holder.position - transform.position);
         if (Time.time >= stateUntil)
@@ -927,6 +994,7 @@ public class Enemy : MonoBehaviour
 
     void Release()
     {
+        telekinetic = false;
         holder = null;
         HeldBy = -1;
         if (cc != null) cc.enabled = true;
@@ -936,6 +1004,7 @@ public class Enemy : MonoBehaviour
     public void Throw(Vector3 velocity, float spin)
     {
         if (CurrentState != State.Grabbed) return;
+        telekinetic = false;
         holder = null;
         HeldBy = -1;
         BeginThrow(velocity, spin);
@@ -1104,6 +1173,18 @@ public class Enemy : MonoBehaviour
 
     // Расплющило (у копий — через EnemyManager.Impact)
     public void Squash() { squash = 1f; }
+
+    // Замедление только этой твари (клинок режет её — она «вязнет» во времени, остальные нет)
+    float slowUntil, slowScale = 1f;
+    float TS => Time.time < slowUntil ? slowScale : 1f;
+    public void SlowMo(float duration, float scale)
+    {
+        slowUntil = Time.time + duration;
+        slowScale = scale;
+        float extra = duration * (1f - scale);   // её таймеры тоже идут медленнее
+        stateUntil += extra;
+        nextAttack += extra;
+    }
     Vector3 moveVel;
 
     Vector3 recoilRot, recoilRotVel, recoilPos, recoilPosVel; // отдача всего тела от удара
@@ -1120,7 +1201,12 @@ public class Enemy : MonoBehaviour
         {
             PlayerHealth me = PlayerHealth.Local;
             bool mine = HeldBy >= 0 && (ulong)HeldBy == Net.LocalId && me != null;
-            if (mine && CurrentState == State.Grabbed)
+            if (mine && CurrentState == State.Grabbed && PlayerStaff.LocalTkId == id)
+            {
+                // держу посохом — показываю там, куда тяну, сразу
+                transform.position = Vector3.Lerp(transform.position, PlayerStaff.LocalTkPoint, 8f * Time.deltaTime);
+            }
+            else if (mine && CurrentState == State.Grabbed)
             {
                 // Я держу эту тварь — показываю её у себя в руках сразу, без задержки сети
                 Transform h = me.transform;
@@ -1140,7 +1226,7 @@ public class Enemy : MonoBehaviour
     void UpdateVisual()
     {
         if (visual == null) return;
-        float dt = Time.deltaTime;
+        float dt = Time.deltaTime * TS;
         lunge = Mathf.MoveTowards(lunge, 0f, dt * 3f);
         windTint = CurrentState == State.WindUp ? Mathf.Min(1f, windTint + dt * 3f) : Mathf.MoveTowards(windTint, 0f, dt * 4f);
         squash = Mathf.MoveTowards(squash, 0f, dt * 1.1f);
@@ -1203,6 +1289,13 @@ public class Enemy : MonoBehaviour
         visual.localScale = Vector3.one * bodyScale * 1f + Vector3.Scale(new Vector3(0.3f, 0.1f, -0.5f), Vector3.one * bodyScale * squash);
 
         AnimateParts(t, dt, legsLost);
+
+        // горит — языки пламени
+        if (Burning && Time.time >= nextFlame)
+        {
+            nextFlame = Time.time + 0.05f;
+            CombatFx.Flame(transform.position + Vector3.up * Random.Range(0.3f, 1.6f) * bodyScale + Random.insideUnitSphere * 0.3f * bodyScale);
+        }
 
         // Цвет: белая вспышка при ударе, красное «наливание» во время замаха
         if (renderers == null || (flash <= 0f && windTint <= 0f)) return;

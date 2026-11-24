@@ -49,6 +49,8 @@ public class PlayerCamera : MonoBehaviour
 
     float pitch;            // наклон головы вверх/вниз
     bool thirdPerson;
+    public bool IsThirdPerson => thirdPerson;
+    float bobPhase, landDip, landVel;
     float currentDistance;  // текущее расстояние (с учётом стен)
     PlayerMovement movement;
 
@@ -109,8 +111,17 @@ public class PlayerCamera : MonoBehaviour
             float roll = movement != null ? movement.DodgeRoll : 0f;
             float low = movement != null ? movement.SlideLow : 0f;
             float lowS = low * low * (3f - 2f * low);
-            cameraObject.localPosition = Vector3.down * (Mathf.Sin(roll * Mathf.PI) * 0.6f + lowS * 0.75f);
-            cameraObject.localRotation = ShakeRotation() * Quaternion.Euler(-4f * lowS, 0f, -6f * lowS); // в подкате голова низко и чуть набок
+            // голова покачивается в такт шагам, при приземлении приседает
+            float dt = Mathf.Min(Time.deltaTime, 0.05f);
+            float spd = movement != null && movement.Grounded ? movement.HorizontalSpeed : 0f;
+            float bk = Mathf.Clamp01(spd / 7f) * (1f - lowS);
+            bobPhase += spd * dt * 1.9f;
+            if (movement != null && movement.LandKick > 0f) { landVel -= movement.LandKick * 4f; movement.LandKick = 0f; }
+            landVel += (-landDip * 120f - landVel * 14f) * dt;
+            landDip += landVel * dt;
+            Vector3 bob = new Vector3(Mathf.Sin(bobPhase) * 0.03f, Mathf.Sin(bobPhase * 2f) * 0.045f, 0f) * bk;
+            cameraObject.localPosition = Vector3.down * (Mathf.Sin(roll * Mathf.PI) * 0.6f + lowS * 0.75f) + bob + Vector3.up * landDip;
+            cameraObject.localRotation = ShakeRotation() * Quaternion.Euler(-4f * lowS, 0f, -6f * lowS + Mathf.Sin(bobPhase) * 0.7f * bk); // в подкате голова низко и чуть набок
             return;
         }
 

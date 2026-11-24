@@ -104,8 +104,11 @@ public class PlayerBow : MonoBehaviour
             // лук убран: всё в исходное состояние
             drawing = false; draw = 0f; shotKick = 0f;
             bow.localPosition = restPos; bow.localRotation = restRot;
-            SetFov(0f);
-            if (wasSelected) { PlayerCamera.LookScale = 1f; wasSelected = false; }
+            if (wasSelected)
+            {
+                PlayerCamera.LookScale = 1f; wasSelected = false;
+                if (cam != null && baseFov > 0f) cam.fieldOfView = baseFov; // сразу вернуть обзор (бластер тоже меняет его)
+            }
             return;
         }
 

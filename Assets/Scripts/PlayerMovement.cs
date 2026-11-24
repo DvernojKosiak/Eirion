@@ -43,6 +43,10 @@ public class PlayerMovement : MonoBehaviour
     public float DodgeRoll { get; private set; } // 0..1 — для наклона камеры при перекате
     float verticalVelocity;          // скорость вверх/вниз
     Vector3 pushVel;                 // толчок от удара (тварь отбросила)
+    Vector3 hVel;                    // скорость по земле — разгоняется и тормозит, а не дёргается
+    public float HorizontalSpeed => hVel.magnitude;
+    public bool Grounded => controller != null && controller.isGrounded;
+    public float LandKick { get; set; }  // приземлился — насколько сильно (для камеры)
     float staggerUntil;              // после сильного удара ноги заплетаются — медленнее
 
     // Удар отбросил героя: vel — скорость толчка, stagger — сколько секунд идти медленно
@@ -119,12 +123,17 @@ public class PlayerMovement : MonoBehaviour
 
         // 4. Двигаем героя
         pushVel = Vector3.Lerp(pushVel, Vector3.zero, 1f - Mathf.Exp(-7f * Time.deltaTime));
-        Vector3 velocity = move * speed + pushVel + Vector3.up * verticalVelocity;
+        Vector3 wantH = move * speed;
+        bool rushing = Time.time < dodgeUntil;
+        float accelRate = rushing ? 200f : controller.isGrounded ? (wantH.sqrMagnitude > hVel.sqrMagnitude ? 30f : 24f) : 6f;
+        hVel = Vector3.MoveTowards(hVel, wantH, accelRate * Time.deltaTime);
+        Vector3 velocity = hVel + pushVel + Vector3.up * verticalVelocity;
         bool wasGrounded = controller.isGrounded;
         float fallSpeed = -verticalVelocity;
         controller.Move(velocity * Time.deltaTime);
 
         // 5. Урон от падения: с высоты больше ~4.5 м больно, с 12 м — почти смерть
+        if (!wasGrounded && controller.isGrounded && fallSpeed > 3f) LandKick = Mathf.Clamp01(fallSpeed / 14f);
         if (!wasGrounded && controller.isGrounded && fallSpeed > safeFallSpeed && health != null)
             health.TakeDamage((fallSpeed - safeFallSpeed) * fallDamage, "Разбился при падении", false);
     }

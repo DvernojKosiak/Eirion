@@ -139,6 +139,7 @@ public class PlayerHealth : MonoBehaviour
             CombatFx.Sparks(bladePoint, Color.white, 10);
             CombatFx.Hitstop(0.05f);
             if (movement != null) movement.Push(away * 3f, 0.1f);
+            if (PlayerBody.Local != null) PlayerBody.Local.Hit(away, 0.35f);
             PlayerCamera.Punch(new Vector3(-3f, side * -3f, side * 2f));
             PlayerCamera.Shake(0.15f);
             Notice("Блок", new Color(0.75f, 0.85f, 1f));
@@ -151,6 +152,7 @@ public class PlayerHealth : MonoBehaviour
     {
         float k = Mathf.Clamp(amount / 20f, 0.5f, 1.6f);
         if (movement != null) movement.Push(away * (4f + 3f * k), 0.3f * k);
+        if (PlayerBody.Local != null) PlayerBody.Local.Hit(away, k);
         PlayerCamera.Punch(new Vector3(-6f * k, side * -6f * k, side == 0 ? 0f : side * 9f * k));
         PlayerCamera.Shake(Mathf.Clamp(amount / 30f, 0.2f, 0.6f));
         CombatFx.Play(CombatFx.Snd.Hurt, transform.position + Vector3.up * 1.4f, 1f);

@@ -97,6 +97,38 @@ public static class CombatFx
         }
     }
 
+    static Material flame, smoke;
+
+    // Язычок огня: светится, поднимается и тает
+    public static void Flame(Vector3 at, float size = 1f)
+    {
+        Material m = Mat(ref flame, new Color(1f, 0.45f, 0.1f), 4f);
+        GameObject g = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        g.layer = 2;
+        Object.Destroy(g.GetComponent<Collider>());
+        g.transform.position = at;
+        g.transform.localScale = Vector3.one * Random.Range(0.12f, 0.25f) * size;
+        Renderer r = g.GetComponent<Renderer>();
+        r.sharedMaterial = m;
+        r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        g.AddComponent<Shrink>().Setup(Vector3.up * Random.Range(1f, 2.2f) + Random.insideUnitSphere * 0.4f, Random.Range(0.3f, 0.55f));
+    }
+
+    // Дым: тёмный, медленно поднимается
+    public static void Smoke(Vector3 at, float size = 1f)
+    {
+        Material m = Mat(ref smoke, new Color(0.08f, 0.07f, 0.07f), 0f);
+        GameObject g = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        g.layer = 2;
+        Object.Destroy(g.GetComponent<Collider>());
+        g.transform.position = at;
+        g.transform.localScale = Vector3.one * Random.Range(0.4f, 0.8f) * size;
+        Renderer r = g.GetComponent<Renderer>();
+        r.sharedMaterial = m;
+        r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        g.AddComponent<Shrink>().Setup(Vector3.up * Random.Range(0.6f, 1.4f) + Random.insideUnitSphere * 0.8f, Random.Range(0.8f, 1.4f));
+    }
+
     // Ядовитый взрыв мешка плевальщика
     public static void Poison(Vector3 at, int count)
     {
@@ -117,7 +149,7 @@ public static class CombatFx
     // =====================================================================
     // Звуки боя. Делаются прямо в коде (файлы не нужны): удар по мясу, свист клинка, звон блока...
     // =====================================================================
-    public enum Snd { Flesh, FleshHeavy, Whoosh, Clang, Parry, Hurt, Thunk, Twang, Fall }
+    public enum Snd { Flesh, FleshHeavy, Whoosh, Clang, Parry, Hurt, Thunk, Twang, Fall, Boom, Zap, Laser, Sizzle, Hum }
 
     static AudioClip[] clips;
     const int Rate = 44100;
@@ -143,7 +175,7 @@ public static class CombatFx
 
     static void BuildClips()
     {
-        clips = new AudioClip[9];
+        clips = new AudioClip[14];
         clips[(int)Snd.Flesh] = Make("flesh", 0.22f, (t, n) => Thud(t, 150f, 55f, 22f) + Lp(n, 0.25f) * Mathf.Exp(-t * 35f) * 0.7f + n * Mathf.Exp(-t * 220f) * 0.5f);
         clips[(int)Snd.FleshHeavy] = Make("fleshHeavy", 0.38f, (t, n) => Thud(t, 120f, 38f, 11f) * 1.2f + Lp(n, 0.18f) * Mathf.Exp(-t * 18f) * 0.9f + n * Mathf.Exp(-t * 160f) * 0.6f);
         clips[(int)Snd.Whoosh] = Make("whoosh", 0.3f, (t, n) => { float k = Mathf.Sin(Mathf.PI * t / 0.3f); return Lp(n, 0.06f + 0.2f * k) * k * k * 1.6f; });
@@ -152,6 +184,11 @@ public static class CombatFx
         clips[(int)Snd.Hurt] = Make("hurt", 0.28f, (t, n) => Thud(t, 95f, 42f, 14f) * 1.3f + Lp(n, 0.12f) * Mathf.Exp(-t * 30f) * 0.8f);
         clips[(int)Snd.Thunk] = Make("thunk", 0.14f, (t, n) => Thud(t, 260f, 120f, 38f) + n * Mathf.Exp(-t * 250f) * 0.5f);
         clips[(int)Snd.Twang] = Make("twang", 0.4f, (t, n) => (Mathf.Sin(2f * Mathf.PI * 165f * t + Mathf.Sin(t * 60f) * 0.6f) + 0.4f * Mathf.Sin(2f * Mathf.PI * 330f * t)) * Mathf.Exp(-t * 10f) + n * Mathf.Exp(-t * 120f) * 0.3f);
+        clips[(int)Snd.Boom] = Make("boom", 1.1f, (t, n) => Thud(t, 70f, 28f, 4f) * 1.2f + Lp(n, 0.05f) * Mathf.Exp(-t * 3.5f) * 1.6f + n * Mathf.Exp(-t * 60f) * 0.6f);
+        clips[(int)Snd.Zap] = Make("zap", 0.7f, (t, n) => (Mathf.Sin(t * 900f) > 0.3f ? n : n * 0.2f) * Mathf.Exp(-t * 5f) + Thud(t, 90f, 40f, 6f) * 0.8f);
+        clips[(int)Snd.Laser] = Make("laser", 0.18f, (t, n) => { float f = Mathf.Lerp(1500f, 260f, t / 0.18f); float ph = 2f * Mathf.PI * f * t; return (Mathf.Sign(Mathf.Sin(ph)) * 0.5f + Mathf.Sin(ph * 0.5f)) * Mathf.Exp(-t * 14f); });
+        clips[(int)Snd.Sizzle] = Make("sizzle", 0.5f, (t, n) => (n - Lp(n, 0.3f) * 0.5f) * Mathf.Exp(-t * 7f) * (0.7f + 0.3f * Mathf.Sin(t * 120f)));
+        clips[(int)Snd.Hum] = Make("hum", 0.8f, (t, n) => (Mathf.Sin(2f * Mathf.PI * 110f * t) + 0.5f * Mathf.Sin(2f * Mathf.PI * 221f * t + Mathf.Sin(t * 9f))) * Mathf.Min(1f, t * 6f) * Mathf.Min(1f, (0.8f - t) * 6f) * 0.6f);
         clips[(int)Snd.Fall] = Make("fall", 0.32f, (t, n) => Thud(t, 80f, 35f, 13f) + Lp(n, 0.1f) * Mathf.Exp(-t * 20f) * 0.8f);
     }
 
@@ -195,5 +232,31 @@ public static class CombatFx
         AudioClip c = AudioClip.Create(name, n, 1, Rate, false);
         c.SetData(data, 0);
         return c;
+    }
+}
+
+
+// Кусочек эффекта: летит, уменьшается и исчезает
+public class Shrink : MonoBehaviour
+{
+    Vector3 vel;
+    float life, age;
+    Vector3 startScale;
+
+    public void Setup(Vector3 velocity, float lifetime)
+    {
+        vel = velocity;
+        life = Mathf.Max(0.05f, lifetime);
+        startScale = transform.localScale;
+    }
+
+    void Update()
+    {
+        age += Time.deltaTime;
+        float k = age / life;
+        if (k >= 1f) { Destroy(gameObject); return; }
+        transform.position += vel * Time.deltaTime;
+        vel *= 1f - 1.5f * Time.deltaTime;
+        transform.localScale = startScale * (1f - k * k);
     }
 }

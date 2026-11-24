@@ -390,7 +390,17 @@ public class PlayerStaff : MonoBehaviour
         pos += Vector3.forward * 0.12f * Mathf.Sin(castKick * Mathf.PI);
         rot *= Quaternion.Euler(-25f * castKick, 0f, 0f);
         if (charge >= 0.99f || tkHolding) pos += Random.insideUnitSphere * 0.003f;
+        if (combat != null && combat.IsHolding)
+        {
+            // левая рука держит тварь — посох опущен в правой
+            pos += new Vector3(0.08f, -0.22f, -0.12f);
+            rot *= Quaternion.Euler(35f, 0f, -25f);
+        }
         WeaponSway.Apply(ref pos, ref rot);
+
+        // глаза идут за посохом: завёл за плечо — взгляд чуть назад-вверх и вбок, метнул — качнулся вперёд
+        float kickS = Mathf.Sin(castKick * Mathf.PI);
+        PlayerCamera.Sway(new Vector3(-6f * c + 4f * kickS, 1.5f * c, -2.5f * c) + (aiming ? new Vector3(-3f, 0f, 0f) : Vector3.zero));
 
         float k = 1f - Mathf.Exp(-14f * Time.deltaTime);
         staff.localPosition = Vector3.Lerp(staff.localPosition, pos, k);
@@ -472,7 +482,7 @@ public class PlayerStaff : MonoBehaviour
 
         GUI.Label(new Rect(0, Screen.height - 88, Screen.width, 22),
                   "ЛКМ держать — огненный шар (дольше — сильнее)   ПКМ держать — молния, отпустить — удар   F держать — телекинез (веди и отпусти — швырнёшь, колёсико — ближе/дальше)", Hud.CenterTiny);
-        if (Time.time < messageUntil)
+        if (Hud.Popups && Time.time < messageUntil)
             GUI.Label(new Rect(cx - 300, cy - 70, 600, 30), message, Hud.CenterBig);
     }
 }

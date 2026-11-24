@@ -602,7 +602,7 @@ public class EnemyManager : MonoBehaviour
         if (!GameRunning) return;
 
         // Надпись приёма: «КАЗНЬ!», «ОТРУБИЛ НОГУ!»...
-        if (Time.unscaledTime < calloutUntil && !string.IsNullOrEmpty(calloutText))
+        if (Hud.Popups && Time.unscaledTime < calloutUntil && !string.IsNullOrEmpty(calloutText))
         {
             float k = Mathf.Clamp01((calloutUntil - Time.unscaledTime) / 0.3f);
             Color old = GUI.color;

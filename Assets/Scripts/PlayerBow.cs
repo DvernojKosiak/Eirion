@@ -166,7 +166,15 @@ public class PlayerBow : MonoBehaviour
         Vector3 shake = draw >= 0.99f ? Random.insideUnitSphere * 0.0025f : Vector3.zero;
         Vector3 bp = Vector3.Lerp(restPos, aimPos, s) + shake + Vector3.back * 0.06f * shotKick;
         Quaternion br = Quaternion.Slerp(restRot, aimRot, s) * Quaternion.Euler(-10f * shotKick, 0f, 0f);
+        if (combat != null && combat.IsHolding)
+        {
+            // левая рука держит тварь — лук опущен
+            bp += new Vector3(0.08f, -0.22f, -0.12f);
+            br *= Quaternion.Euler(35f, 0f, -25f);
+        }
         WeaponSway.Apply(ref bp, ref br, 1f - 0.6f * s);   // натянул — держишь твёрже
+        // натягиваешь — голова чуть клонится к луку, отпустил — взгляд дёргается за стрелой
+        PlayerCamera.Sway(new Vector3(-1.5f * shotKick, 0f, 2.5f * s));
         bow.localPosition = bp;
         bow.localRotation = br;
 
@@ -220,7 +228,7 @@ public class PlayerBow : MonoBehaviour
         Hud.Fill(new Rect(cx + gap, cy - 1, 8, 2), c);
         Hud.Fill(new Rect(cx - 1, cy - 1, 2, 2), c);
 
-        if (Time.time < markUntil)
+        if (Hud.Popups && Time.time < markUntil)
         {
             Color old = GUI.color;
             GUI.color = markHeavy ? new Color(1f, 0.75f, 0.3f, Mathf.Clamp01((markUntil - Time.time) / 0.3f)) : new Color(1f, 1f, 1f, Mathf.Clamp01((markUntil - Time.time) / 0.3f));
@@ -232,7 +240,7 @@ public class PlayerBow : MonoBehaviour
         GUI.Label(new Rect(cx - 150, Screen.height - 120, 300, 24), (infiniteArrows ? "Стрелы: без конца" : "Стрел: " + n), Hud.Center);
         GUI.Label(new Rect(0, Screen.height - 88, Screen.width, 22),
                   "зажми ЛКМ — натянуть, отпусти — выстрел   (до золотого прицела — мощный, пригвождает к стене)   свои стрелы подбираются", Hud.CenterTiny);
-        if (Time.time < noArrowsMsgUntil || (n == 0 && drawing))
+        if (Hud.Popups && Time.time < noArrowsMsgUntil || (n == 0 && drawing))
             GUI.Label(new Rect(cx - 300, cy - 70, 600, 30), "Нет стрел — сделай на верстаке (1 бревно → 6 стрел)", Hud.CenterBig);
     }
 }

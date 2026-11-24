@@ -9,11 +9,10 @@ public class PlayerBlaster : MonoBehaviour
 {
     public static PlayerBlaster Local { get; private set; }
 
-    public float capacity = 36f;        // выстрелов в аккумуляторе
-    public float fireRate = 8f;          // выстрелов в секунду
+    public float capacity = 24f;        // выстрелов в аккумуляторе
+    public float fireRate = 2.8f;        // выстрелов в секунду — между выстрелами катушки успевают набрать заряд
     public float boltSpeed = 85f;
     public float rechargeTime = 1.8f;    // полная перезарядка
-    public float trickle = 3f;           // подзарядка сама, в выстрелах в секунду
     public float zoom = 18f;
 
     public float Charge { get; private set; }
@@ -84,15 +83,15 @@ public class PlayerBlaster : MonoBehaviour
     }
 
     bool Selected => hotbar != null && hotbar.Current == Tool.Blaster;
+    float emptyMsgUntil;
 
     void Update()
     {
-        // аккумулятор: перезарядка и тихая подзарядка
+        // аккумулятор сам НЕ заряжается — только перезарядка на R
         if (recharging)
         {
             if (Time.time - rechargeStart >= rechargeTime) { recharging = false; Charge = capacity; CombatFx.Play(CombatFx.Snd.Clang, transform.position + Vector3.up, 0.25f, 2.2f); }
         }
-        else if (Time.time - lastShot > 1f) Charge = Mathf.Min(capacity, Charge + trickle * Time.deltaTime);
         bloom = Mathf.MoveTowards(bloom, 0f, Time.deltaTime * 6f);
         kick = Mathf.MoveTowards(kick, 0f, Time.deltaTime * 9f);
 
@@ -125,7 +124,12 @@ public class PlayerBlaster : MonoBehaviour
             if (mouse.leftButton.isPressed && !recharging && Time.time >= nextShot)
             {
                 if (Charge >= 1f) Shoot();
-                else StartRecharge();
+                else if (mouse.leftButton.wasPressedThisFrame)
+                {
+                    // пусто: сухой щелчок, сам не перезаряжается
+                    CombatFx.Play(CombatFx.Snd.Clang, cam.transform.position, 0.15f, 3f);
+                    emptyMsgUntil = Time.time + 1.5f;
+                }
             }
         }
 
@@ -170,6 +174,10 @@ public class PlayerBlaster : MonoBehaviour
 
         bloom = Mathf.Min(3.5f, bloom + 0.55f);
         kick = 1f;
+        // отдача: ствол подбрасывает вверх и чуть в сторону, в прицеле — слабее
+        float rk = Mathf.Lerp(1f, 0.55f, aim);
+        PlayerCamera.Punch(new Vector3(-3.2f * rk, Random.Range(-0.9f, 0.9f) * rk, Random.Range(-1.2f, 1.2f) * rk));
+        PlayerCamera.Shake(0.06f * rk);
         heat = Mathf.Min(1f, heat + 0.07f);
         flashUntil = Time.time + 0.045f;
         if (flash != null) flash.localRotation = Quaternion.Euler(0f, 0f, Random.Range(0f, 90f));
@@ -188,6 +196,12 @@ public class PlayerBlaster : MonoBehaviour
             // перезарядка: бластер наклонён, аккумулятор мигает
             float t = (Time.time - rechargeStart) / rechargeTime;
             rot *= Quaternion.Euler(20f * Mathf.Sin(Mathf.Clamp01(t) * Mathf.PI), 0f, 35f * Mathf.Sin(Mathf.Clamp01(t) * Mathf.PI));
+        }
+        if (combat != null && combat.IsHolding)
+        {
+            // левая рука держит тварь — бластер опущен в правой
+            pos += new Vector3(0.08f, -0.22f, -0.12f);
+            rot *= Quaternion.Euler(35f, 0f, -25f);
         }
         WeaponSway.Apply(ref pos, ref rot, 1f - 0.7f * aim);   // в прицеле держишь твёрже
         float k = 1f - Mathf.Exp(-20f * Time.deltaTime);
@@ -246,7 +260,7 @@ public class PlayerBlaster : MonoBehaviour
         Hud.Fill(new Rect(cx + g - 5, cy + g, 7, 2), c); Hud.Fill(new Rect(cx + g, cy + g - 5, 2, 7), c);
         Hud.Fill(new Rect(cx - 1, cy - 1, 2, 2), c);
 
-        if (Time.time < markUntil)
+        if (Hud.Popups && Time.time < markUntil)
             GUI.Label(new Rect(cx + 24, cy - 4, 200, 22), markText, Hud.Small);
 
         // аккумулятор
@@ -255,8 +269,10 @@ public class PlayerBlaster : MonoBehaviour
         Hud.Bar(new Rect(cx - 60, cy + 40, 120, 5), recharging ? Mathf.Clamp01((Time.time - rechargeStart) / rechargeTime) : f,
                 f < 0.25f && !recharging ? new Color(1f, 0.3f, 0.2f) : new Color(0.4f, 0.9f, 1f), null);
         GUI.Label(new Rect(cx - 100, cy + 46, 200, 20), text, Hud.CenterTiny);
+        if (!recharging && Charge < 1f)
+            GUI.Label(new Rect(cx - 100, cy + 62, 200, 20), "пусто — R", Hud.CenterTiny);   // мелко под аккумулятором
 
         GUI.Label(new Rect(0, Screen.height - 88, Screen.width, 22),
-                  "ЛКМ — стрелять (держи — очередь)   ПКМ — прицелиться   R — перезарядить аккумулятор (сам тоже заряжается)", Hud.CenterTiny);
+                  "ЛКМ — стрелять (держи — очередь)   ПКМ — прицелиться   R — перезарядить аккумулятор (сам не заряжается)", Hud.CenterTiny);
     }
 }

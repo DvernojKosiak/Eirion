@@ -1279,9 +1279,21 @@ public class Enemy : MonoBehaviour
             default:
                 // наклон по движению: отбросило назад — откидывается, вбок — заваливается
                 rot = Quaternion.Euler(Mathf.Clamp(visVel.z * 2f, -15f, 6f), 0f, Mathf.Clamp(-visVel.x * 2.5f, -12f, 12f));
-                // без ноги не устоять — ползёт на руках (с одной ногой — ещё и отталкивается ею, кренясь)
-                if (legsLost >= 1) { rot = Quaternion.Euler(68f, 0f, legsLost == 1 ? Mathf.Sin(walkPhase) * 8f : 0f); pos.y = -0.25f * bodyScale; }
                 break;
+        }
+        // Без ноги не устоять — ползёт на брюхе, подтягиваясь руками.
+        // Тело почти лёжа, но бёдра на высоте толщины тела — ничего не уходит в пол.
+        State cs = CurrentState;
+        if (legsLost >= 1 && !climbing && (cs == State.Move || cs == State.WindUp || cs == State.Recover || cs == State.Flinch || cs == State.Stagger))
+        {
+            float th = 80f;
+            if (cs == State.WindUp) th = 60f;                                   // приподнимается на руках перед ударом
+            else if (cs == State.Recover) th = 60f + 20f * (1f - lunge);        // бросок вперёд и снова на брюхо
+            float roll = legsLost == 1 ? Mathf.Sin(walkPhase * 1.5f) * 7f : Mathf.Sin(walkPhase * 1.5f) * 4f; // перекатывается с боку на бок
+            rot = Quaternion.Euler(th, 0f, roll);
+            float r = th * Mathf.Deg2Rad;
+            pos.y = (0.3f - 0.9f * Mathf.Cos(r)) * bodyScale;                    // бёдра (0.9 над ступнями) — на высоте 0.3
+            pos.z += -0.9f * Mathf.Sin(r) * 0.7f * bodyScale;                    // тело тянется вперёд от бёдер, а не улетает вперёд
         }
         if (CurrentState == State.Thrown && !Simulated)
         {
@@ -1401,8 +1413,15 @@ public class Enemy : MonoBehaviour
                     if (arm) e.x = -60f;
                     break;
                 default:
-                    if (legsLost >= 1 && arm) e.x = -120f + Mathf.Sin(walkPhase * 1.5f + side) * 40f; // подтягивается на руках
-                    if (legsLost == 1 && leg) e.x = 40f + Mathf.Sin(walkPhase * 1.5f) * 25f;           // уцелевшая нога волочится и толкает
+                    if (legsLost >= 1)
+                    {
+                        // ползёт: руки по очереди выбрасываются вперёд, цепляются за землю и подтягивают тело
+                        float ph = walkPhase * 1.5f + (side > 0f ? 0f : Mathf.PI);
+                        if (arm) e.x = -87f + Mathf.Sin(ph) * 22f;
+                        if (bp.type == BodyPartType.Torso) e.x = -30f;                // грудь приподнята
+                        if (bp.type == BodyPartType.Head) e.x = -40f;                 // смотрит вперёд, а не в землю
+                        if (leg) e.x = Mathf.Sin(walkPhase * 1.5f) * 12f;             // уцелевшая нога волочится сзади и толкает
+                    }
                     break;
             }
 

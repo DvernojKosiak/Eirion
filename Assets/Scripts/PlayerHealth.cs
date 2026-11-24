@@ -193,6 +193,7 @@ public class PlayerHealth : MonoBehaviour
     {
         deathText = text;
         IsDead = true;
+        CombatFx.ResetTime();   // раньше замедление от последнего удара «залипало» — бой выключается и время не возвращалось
         IsBlocking = false;
         respawnAt = Time.time + respawnTime;
         Inventory inv = GetComponent<Inventory>();
@@ -211,6 +212,7 @@ public class PlayerHealth : MonoBehaviour
         Health = maxHealth;
         Stamina = maxStamina;
         IsDead = false;
+        CombatFx.ResetTime();
         SetControls(true);
     }
 
@@ -222,6 +224,7 @@ public class PlayerHealth : MonoBehaviour
 
     void Update()
     {
+        CombatFx.Tick();   // время возвращается к норме, даже когда бой выключен (после смерти)
         flash = Mathf.Max(0f, flash - Time.deltaTime * 2f);
         blockFlash = Mathf.Max(0f, blockFlash - Time.deltaTime * 4f);
         if (IsDead)
@@ -327,13 +330,13 @@ public class PlayerHealth : MonoBehaviour
             Hud.Fill(new Rect(cx + gap, cy - 26, 6, 52), GuardSide > 0 ? c : dim, 3);
             Hud.Fill(new Rect(cx - 26, cy - gap - 6, 52, 6), GuardSide == 0 ? c : dim, 3);
             Color old = GUI.color; GUI.color = c;
-            GUI.Label(new Rect(0, cy + 44, Screen.width, 22), InParryWindow ? "парирование!" : "блок " + SideName(GuardSide) + " — дёрни мышь влево / вправо / вверх под удар", Hud.CenterTiny);
+            if (Hud.Popups) GUI.Label(new Rect(0, cy + 44, Screen.width, 22), InParryWindow ? "парирование!" : "блок " + SideName(GuardSide) + " — дёрни мышь влево / вправо / вверх под удар", Hud.CenterTiny);
             GUI.color = old;
         }
 
         DrawThreats(cx, cy);
 
-        if (Time.time < noticeUntil)
+        if (Hud.Popups && Time.time < noticeUntil)
         {
             Color old = GUI.color; GUI.color = noticeColor;
             GUI.Label(new Rect(0, Screen.height / 2f - 110, Screen.width, 34), notice, Hud.CenterBig);

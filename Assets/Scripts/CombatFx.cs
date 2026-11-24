@@ -25,8 +25,11 @@ public static class CombatFx
     }
 
     // Вызывать каждый кадр (это делает PlayerCombat). Время возвращается плавно.
+    static int tickFrame = -1;
     public static void Tick()
     {
+        if (tickFrame == Time.frameCount) return;   // зовут и бой, и здоровье — считаем один раз за кадр
+        tickFrame = Time.frameCount;
         float now = Time.unscaledTime;
         bool slow = now < slowUntil;
         if (!stopping && !slow && Time.timeScale >= 1f) return;
@@ -34,6 +37,13 @@ public static class CombatFx
         float target = slow ? slowScale : 1f;
         Time.timeScale = Mathf.MoveTowards(Time.timeScale, target, Time.unscaledDeltaTime * (Time.timeScale > target ? 10f : (slow ? 12f : 3f)));
         if (Time.timeScale >= 1f && stopping) { stopping = false; readyAt = now + 0.15f; }
+    }
+
+    // Сбросить все замедления сразу (смерть, возрождение)
+    public static void ResetTime()
+    {
+        stopping = false; slowUntil = 0f; stopUntil = 0f;
+        Time.timeScale = 1f;
     }
 
     static Material spark;

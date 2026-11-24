@@ -44,6 +44,11 @@ public class PlayerCamera : MonoBehaviour
     static Vector3 punch, punchVel;
     public static void Punch(Vector3 degrees) { punchVel += degrees * 28f; }
 
+    // Взгляд идёт за размахом: оружие каждый кадр говорит, куда чуть увести глаза (в градусах).
+    // Камера мягко тянется туда пружиной и возвращается, когда размах кончился.
+    static Vector3 swayIn, sway, swayVel;
+    public static void Sway(Vector3 degrees) { swayIn += degrees; }
+
     // Насколько послушна мышь (меньше 1 — «тяжело», например клинок застрял в теле)
     public static float LookScale = 1f;
 
@@ -155,7 +160,11 @@ public class PlayerCamera : MonoBehaviour
         float udt = Mathf.Min(Time.unscaledDeltaTime, 0.05f);
         punchVel += (-punch * 220f - punchVel * 22f) * udt;
         punch += punchVel * udt;
-        Quaternion pq = Quaternion.Euler(punch);
+        Vector3 want = Vector3.ClampMagnitude(swayIn, 14f);
+        swayIn = Vector3.zero;
+        swayVel += ((want - sway) * 90f - swayVel * 14f) * udt;
+        sway += swayVel * udt;
+        Quaternion pq = Quaternion.Euler(punch + sway);
         if (shake <= 0.001f) return pq;
         float t = Time.unscaledTime * 35f;
         Quaternion q = Quaternion.Euler((Mathf.PerlinNoise(t, 0f) - 0.5f) * 6f * shake,

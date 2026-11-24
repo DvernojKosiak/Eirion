@@ -684,7 +684,7 @@ public class PlayerCombat : MonoBehaviour
     Vector3 ThrowVelocity()
     {
         Vector3 f = cam != null ? cam.transform.forward : transform.forward;
-        return f * throwSpeed + Vector3.up * 2.5f;
+        return f * throwSpeed * 0.85f + Vector3.up * 2.5f;   // бросок одной рукой — чуть слабее
     }
 
     // Бросок — не сразу: герой разворачивается, заносит тварь и швыряет её всем телом
@@ -735,39 +735,51 @@ public class PlayerCombat : MonoBehaviour
         Enemy e = EnemyManager.Instance != null ? EnemyManager.Instance.Find(heldId) : null;
         if (e == null) return;
         float sc = e.bodyScale;
-        float reach = 0.55f + 0.4f * sc;
-        Vector3 hold = new Vector3(0f, -0.75f, reach);        // ноги твари чуть над землёй, тело у моей груди
-        Vector3 local = hold;
+        // Держу ОДНОЙ (левой) рукой за шиворот — в правой остаётся оружие.
+        // Сначала решаю, где моя кисть, а тварь подвешиваю под ней: кисть всегда на твари.
+        float neck = 1.25f * sc;                                   // от ног твари до её шеи
+        float hy = Mathf.Max(0.3f, -0.97f + neck);                 // крупную поднимаю выше, чтобы ноги не волочились
+        Vector3 hold = new Vector3(-0.2f, hy, 0.5f);               // кисть: слева впереди, на уровне груди
+        Vector3 hand = hold;
         float twist = 0f;
         float t = Time.time;
+        bool over = false;
+        Vector3 overFeet = Vector3.zero;
         if (throwing)
         {
-            float dur = throwOver ? 0.55f : 0.42f;
+            float dur = throwOver ? 0.6f : 0.45f;
             float u = Mathf.Clamp01((t - throwStart) / dur);
             if (!throwOver)
             {
-                // замах вбок и назад, потом рывок вперёд-вверх
-                Vector3 back = new Vector3(0.85f, -0.6f, 0.15f), release = new Vector3(0f, -0.25f, reach + 0.7f);
-                if (u < 0.45f) { float w = Smooth(u / 0.45f); local = Vector3.Lerp(hold, back, w); twist = -45f * w; }
-                else { float w = (u - 0.45f) / 0.55f; w = w * w; local = Vector3.Lerp(back, release, w) + Vector3.up * Mathf.Sin(w * Mathf.PI) * 0.3f; twist = Mathf.Lerp(-45f, 40f, w); }
+                // замах влево-назад одной рукой (корпус разворачивается), потом рывок вперёд-вверх
+                Vector3 back = new Vector3(-0.75f, hy - 0.1f, -0.1f), release = new Vector3(-0.05f, hy + 0.2f, 0.8f);
+                if (u < 0.45f) { float w = Smooth(u / 0.45f); hand = Vector3.Lerp(hold, back, w); twist = 45f * w; }
+                else { float w = (u - 0.45f) / 0.55f; w = w * w; hand = Vector3.Lerp(back, release, w) + Vector3.up * Mathf.Sin(w * Mathf.PI) * 0.25f; twist = Mathf.Lerp(45f, -40f, w); }
+                PlayerCamera.Sway(new Vector3(-2f * Mathf.Sin(u * Mathf.PI), -twist * 0.07f, twist * 0.04f));
             }
             else
             {
-                // через голову: поднимаю над собой и обрушиваю за спину
+                // через голову: поднимаю над собой левой рукой и обрушиваю за спину
                 float a = Smooth(u) * Mathf.PI;                       // 0 — передо мной, π — за спиной
-                local = new Vector3(0f, -0.75f + Mathf.Sin(a) * 1.9f, Mathf.Cos(a) * (reach + 0.2f));
+                over = true;
+                overFeet = new Vector3(-0.25f, -0.75f + Mathf.Sin(a) * 1.9f, Mathf.Cos(a) * (0.75f + 0.4f * sc));
+                PlayerCamera.Sway(new Vector3(-7f * Mathf.Sin(a), 0f, 0f) + new Vector3(5f, 0f, 0f) * Mathf.Clamp01(u * 3f - 2f));
             }
-            if (u >= 1f) { SetHold(e, transform.TransformPoint(local)); ReleaseThrow(); return; }
         }
         else
         {
-            // тварь бьётся в руках
-            local += new Vector3(Mathf.Sin(t * 13f) * 0.04f, Mathf.Sin(t * 9f) * 0.03f, 0f);
+            // тварь бьётся, рука ходит вместе с ней
+            hand += new Vector3(Mathf.Sin(t * 13f) * 0.03f, Mathf.Sin(t * 9f) * 0.025f, 0f);
         }
-        SetHold(e, transform.TransformPoint(local));
+        // ноги твари — под кистью; тело чуть дальше кисти (держу за ворот спереди)
+        Vector3 feet = over ? overFeet : hand + Vector3.forward * 0.22f * sc - Vector3.up * neck;
+        if (throwing && Mathf.Clamp01((t - throwStart) / (throwOver ? 0.6f : 0.45f)) >= 1f) { SetHold(e, transform.TransformPoint(feet)); ReleaseThrow(); return; }
+        SetHold(e, transform.TransformPoint(feet));
         if (PlayerBody.Local != null)
         {
-            PlayerBody.Local.HoldTarget = LocalHoldPoint + Vector3.up * 0.95f * sc;
+            // кисть тянется к тому месту твари, где она реально сейчас (тварь догоняет точку с небольшим запозданием)
+            Vector3 grip = e.transform.position + Vector3.up * neck - transform.forward * 0.22f * sc;
+            PlayerBody.Local.HoldTarget = grip;
             PlayerBody.Local.Twist = twist;
         }
     }
@@ -870,10 +882,14 @@ public class PlayerCombat : MonoBehaviour
     // Поза на дуге удара: th — угол на дуге (минус — замах, плюс — конец удара), amp — размах 0..1
     static void ArcPose(Vector2 s, float thDeg, float amp, out Vector3 dl, out Vector3 hand)
     {
+        // за 90° дуга сжимается: рука не может завести клинок себе за спину и через своё тело
+        if (Mathf.Abs(thDeg) > 90f) thDeg = Mathf.Sign(thDeg) * (90f + (Mathf.Abs(thDeg) - 90f) * 0.35f);
         float th = thDeg * Mathf.Deg2Rad;
         Vector3 side = new Vector3(s.x, s.y, 0f);
-        dl = (Vector3.forward * Mathf.Cos(th) + side * Mathf.Sin(th) + Vector3.forward * 0.2f).normalized;
-        hand = new Vector3(0.15f, -0.3f, 0.3f) + side * (0.25f + 0.17f * amp) * Mathf.Sin(th) + Vector3.forward * (0.12f + 0.08f * amp) * Mathf.Cos(th);
+        // клинок никогда не смотрит назад, в тебя: на краях дуги он уходит вбок, а не за спину
+        float fw = Mathf.Max(Mathf.Cos(th), -0.1f);
+        dl = (Vector3.forward * fw + side * Mathf.Sin(th) + Vector3.forward * 0.35f).normalized;
+        hand = new Vector3(0.15f, -0.3f, 0.3f) + side * (0.25f + 0.17f * amp) * Mathf.Sin(th) + Vector3.forward * (0.12f + 0.08f * amp) * Mathf.Max(Mathf.Cos(th), -0.25f);
     }
 
     static float Smooth(float x) { x = Mathf.Clamp01(x); return x * x * (3f - 2f * x); }
@@ -983,7 +999,8 @@ public class PlayerCombat : MonoBehaviour
         }
         else if (IsHolding)
         {
-            rot = restRotation * Quaternion.Euler(-40f, 0f, 30f); // меч в сторону, руки заняты
+            rot = restRotation * Quaternion.Euler(30f, 0f, -20f);  // левая рука занята тварью — меч опущен в правой
+            pos = restPosition + new Vector3(0.05f, -0.12f, -0.05f);
         }
         else if (toolSwing > 0f)
         {
@@ -1021,6 +1038,13 @@ public class PlayerCombat : MonoBehaviour
 
         swingModel.localRotation = rot;
         swingModel.localPosition = pos;
+
+        // глаза идут за мечом: замахнулся вверх-вправо — и взгляд чуть туда, ударил — проводил
+        if (hasSword && (swinging || (charging && Time.time - pressTime > 0.08f) || IsStuck) && blockBlend < 0.5f)
+        {
+            Vector3 d = pos - new Vector3(0.15f, -0.3f, 0.3f);   // от центра дуги удара
+            PlayerCamera.Sway(new Vector3(-d.y * 24f, d.x * 22f, -d.x * 14f));   // заметно: глаза и голова идут за клинком
+        }
     }
 
     float blockBlend;
@@ -1036,7 +1060,7 @@ public class PlayerCombat : MonoBehaviour
         float cx = Screen.width / 2f, cy = Screen.height / 2f;
         if (hotbar == null || hotbar.Current != Tool.Bow && hotbar.Current != Tool.Blaster) GUI.Label(new Rect(cx - 6, cy - 12, 20, 24), "+", Hud.Big); // у лука свой прицел
 
-        if (Time.time < partTextUntil)
+        if (Hud.Popups && Time.time < partTextUntil)
         {
             Color old = GUI.color;
             GUI.color = new Color(1f, 0.9f, 0.6f, Mathf.Clamp01((partTextUntil - Time.time) / 0.3f));
@@ -1046,8 +1070,8 @@ public class PlayerCombat : MonoBehaviour
 
         if (IsHolding)
         {
-            GUI.Label(new Rect(0, cy + 60, Screen.width, 24), "Держишь тварь:  целься — ЛКМ / G бросить   Q — через себя", Hud.Center);
-            if (arcText != null)
+            GUI.Label(new Rect(0, Screen.height - 88, Screen.width, 22), "Держишь тварь:  целься — ЛКМ / G бросить   Q — через себя", Hud.CenterTiny);
+            if (Hud.Popups && arcText != null)
             {
                 Color old = GUI.color; GUI.color = new Color(1f, 0.75f, 0.3f);
                 GUI.Label(new Rect(0, cy + 84, Screen.width, 24), arcText, Hud.Center);
@@ -1073,7 +1097,7 @@ public class PlayerCombat : MonoBehaviour
             Hud.Bar(r, (float)lookedNode.HitsLeft / lookedNode.maxHits, new Color(0.9f, 0.75f, 0.3f),
                     lookedNode.displayName + "  —  " + PlayerHotbar.NameOf(lookedNode.requiredTool).ToLower());
         }
-        if (Time.time < messageUntil)
+        if (Hud.Popups && Time.time < messageUntil)
             GUI.Label(new Rect(cx - 300, cy - 70, 600, 30), message, Hud.CenterBig);
     }
 }
@@ -1111,6 +1135,8 @@ public static class AimHelper
 // Общие помощники для надписей и панелей на экране
 public static class Hud
 {
+    // Всплывающие надписи по центру («В ГОЛОВУ», «ПОДСЕЧКА!», «нельзя…»). Пока тестим бой — выключены.
+    public static bool Popups = false;
     static GUIStyle big, small, tiny, center, centerBig, centerTiny, title;
     public static GUIStyle Big => big ??= new GUIStyle(GUI.skin.label) { fontSize = 22, fontStyle = FontStyle.Bold, normal = { textColor = Color.white } };
     public static GUIStyle Small => small ??= new GUIStyle(GUI.skin.label) { fontSize = 16, normal = { textColor = Color.white } };

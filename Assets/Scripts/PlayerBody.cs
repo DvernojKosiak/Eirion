@@ -10,7 +10,7 @@ public class PlayerBody : MonoBehaviour
     public static PlayerBody Local { get; private set; }
 
     Transform hips, torso, head, armL, armR, foreL, foreR, thighL, thighR, shinL, shinR;
-    Renderer[] upper, all;
+    Renderer[] upper, all, leftArm = new Renderer[0];
     Renderer capsule;
     PlayerCamera pcam;
     PlayerMovement movement;
@@ -67,6 +67,7 @@ public class PlayerBody : MonoBehaviour
         foreach (Renderer r in all)
             if (!r.transform.IsChildOf(thighL) && !r.transform.IsChildOf(thighR)) up.Add(r);
         upper = up.ToArray();
+        leftArm = armL.GetComponentsInChildren<Renderer>();
     }
 
     static Transform Node(string name, Transform parent, Vector3 pos)
@@ -136,8 +137,10 @@ public class PlayerBody : MonoBehaviour
 
         // от первого лица верх тела не рисуем (только тень), чтобы не мешал
         bool fp = local && !pcam.IsThirdPerson;
+        // но если держу тварь — левую руку видно: она её и держит
+        bool showLeft = local && HoldTarget.HasValue;
         foreach (Renderer r in upper)
-            r.shadowCastingMode = fp ? UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly : UnityEngine.Rendering.ShadowCastingMode.On;
+            r.shadowCastingMode = fp && !(showLeft && System.Array.IndexOf(leftArm, r) >= 0) ? UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly : UnityEngine.Rendering.ShadowCastingMode.On;
 
         // скорость и ускорение — по тому, как сдвинулись (работает и для чужих игроков)
         Vector3 v = (transform.position - lastPos) / dt;
@@ -223,19 +226,25 @@ public class PlayerBody : MonoBehaviour
         Transform tool = hotbar != null ? hotbar.CurrentModel : null;
         if (local && HoldTarget.HasValue && !dead)
         {
-            // держу тварь: обе руки обхватывают её
-            Vector3 tp = torso.InverseTransformPoint(HoldTarget.Value);
-            Vector3 dl = tp - armL.localPosition + Vector3.right * 0.15f, dr = tp - armR.localPosition - Vector3.right * 0.15f;
-            if (dl.sqrMagnitude > 0.01f) aL = Quaternion.FromToRotation(Vector3.down, dl.normalized);
-            if (dr.sqrMagnitude > 0.01f) aR = Quaternion.FromToRotation(Vector3.down, dr.normalized);
-            eL = eR = Quaternion.Euler(-30f, 0f, 0f);
+            // держу тварь левой рукой: кисть ровно в точке захвата (локоть сгибается сам — по длине руки)
+            Vector3 reachL = torso.InverseTransformPoint(HoldTarget.Value) - armL.localPosition;
+            float reachLen = reachL.magnitude;
+            if (reachLen > 0.01f)
+            {
+                const float upLen = 0.32f, loLen = 0.3f;
+                float reachD = Mathf.Clamp(reachLen, 0.08f, upLen + loLen - 0.001f);
+                float elbow = Mathf.Acos(Mathf.Clamp((upLen * upLen + loLen * loLen - reachD * reachD) / (2f * upLen * loLen), -1f, 1f)) * Mathf.Rad2Deg; // угол в локте
+                float lift = Mathf.Acos(Mathf.Clamp((upLen * upLen + reachD * reachD - loLen * loLen) / (2f * upLen * reachD), -1f, 1f)) * Mathf.Rad2Deg;  // плечо чуть ниже прямой линии
+                aL = Quaternion.FromToRotation(Vector3.down, reachL / reachLen) * Quaternion.Euler(lift, 0f, 0f);
+                eL = Quaternion.Euler(-(180f - elbow), 0f, 0f);
+            }
         }
-        else if (tool != null && tool.gameObject.activeInHierarchy && !dead)
+        if (tool != null && tool.gameObject.activeInHierarchy && !dead)
         {
             Vector3 to = torso.InverseTransformPoint(tool.position) - armR.localPosition;
             if (to.sqrMagnitude > 0.01f) { aR = Quaternion.FromToRotation(Vector3.down, to.normalized); eR = Quaternion.Euler(-10f, 0f, 0f); }
             bool twoHands = hotbar.Current == Tool.Bow || hotbar.Current == Tool.Staff || hotbar.Current == Tool.Blaster;
-            if (twoHands)
+            if (twoHands && !(local && HoldTarget.HasValue))   // левая занята тварью — оружие в одной правой
             {
                 Vector3 toL = torso.InverseTransformPoint(tool.position) - armL.localPosition;
                 if (toL.sqrMagnitude > 0.01f) { aL = Quaternion.FromToRotation(Vector3.down, toL.normalized); eL = Quaternion.Euler(-25f, 0f, 0f); }

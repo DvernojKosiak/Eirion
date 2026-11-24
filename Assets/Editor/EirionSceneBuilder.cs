@@ -1175,27 +1175,51 @@ public static class EirionSceneBuilder
         Part(bow.transform, PrimitiveType.Cube, new Vector3(0f, -0.32f, -0.05f), new Vector3(0.035f, 0.46f, 0.035f), darkWood, new Vector3(-18f, 0f, 0f), false);
         bow.SetActive(false);
 
-        // Посох с волшебным камнем (лайлилиум) на верхушке
+        // Посох с волшебным камнем (лайлилиум): кривое древко, железные кольца, обмотка, «когти» держат камень
         GameObject staff = new GameObject("Staff");
         staff.transform.SetParent(pivot.transform, false);
         staff.transform.localPosition = new Vector3(0.36f, -0.55f, 0.62f);
         staff.transform.localRotation = Quaternion.Euler(-8f, 0f, -6f);
-        Part(staff.transform, PrimitiveType.Cube, new Vector3(0f, 0.35f, 0f), new Vector3(0.045f, 1.7f, 0.045f), darkWood, Vector3.zero, false);
-        Part(staff.transform, PrimitiveType.Cube, new Vector3(0.05f, 1.16f, 0f), new Vector3(0.03f, 0.2f, 0.03f), darkWood, new Vector3(0f, 0f, -20f), false);
-        Part(staff.transform, PrimitiveType.Cube, new Vector3(-0.05f, 1.16f, 0f), new Vector3(0.03f, 0.2f, 0.03f), darkWood, new Vector3(0f, 0f, 20f), false);
-        Part(staff.transform, PrimitiveType.Cube, new Vector3(0f, 1.25f, 0f), new Vector3(0.11f, 0.11f, 0.11f), crystal, new Vector3(45f, 0f, 45f), false).name = "Stone";
+        Material leather = Mat("Leather", new Color(0.16f, 0.1f, 0.07f));
+        Part(staff.transform, PrimitiveType.Cube, new Vector3(0f, -0.05f, 0f), new Vector3(0.05f, 0.85f, 0.05f), darkWood, new Vector3(0f, 0f, 2f), false);
+        Part(staff.transform, PrimitiveType.Cube, new Vector3(0.01f, 0.72f, 0f), new Vector3(0.045f, 0.75f, 0.045f), darkWood, new Vector3(2f, 0f, -3f), false);
+        Part(staff.transform, PrimitiveType.Cube, new Vector3(0f, 0.3f, 0f), new Vector3(0.062f, 0.3f, 0.062f), leather, Vector3.zero, false);
+        foreach (float y in new[] { -0.4f, 0.12f, 0.5f, 1.02f })
+            Part(staff.transform, PrimitiveType.Cube, new Vector3(0.005f, y, 0f), new Vector3(0.066f, 0.035f, 0.066f), iron, new Vector3(0f, 45f, 0f), false);
+        for (int i = 0; i < 4; i++)
+        {
+            float a = i * 90f;
+            Vector3 dir = Quaternion.Euler(0f, a, 0f) * Vector3.forward;
+            GameObject claw = Part(staff.transform, PrimitiveType.Cube, new Vector3(0.01f, 1.17f, 0f) + dir * 0.045f, new Vector3(0.022f, 0.2f, 0.022f), darkWood, Vector3.zero, false);
+            claw.transform.localRotation = Quaternion.AngleAxis(22f, Vector3.Cross(Vector3.up, dir));
+            Part(staff.transform, PrimitiveType.Cube, new Vector3(0.01f, 1.3f, 0f) + dir * 0.07f, new Vector3(0.018f, 0.09f, 0.018f), iron, Vector3.zero, false)
+                .transform.localRotation = Quaternion.AngleAxis(-25f, Vector3.Cross(Vector3.up, dir));
+        }
+        Part(staff.transform, PrimitiveType.Cube, new Vector3(0.01f, 1.28f, 0f), new Vector3(0.11f, 0.11f, 0.11f), crystal, new Vector3(45f, 0f, 45f), false).name = "Stone";
+        Part(staff.transform, PrimitiveType.Cube, new Vector3(0.05f, 0.98f, 0.035f), new Vector3(0.006f, 0.12f, 0.006f), leather, Vector3.zero, false);
+        Part(staff.transform, PrimitiveType.Cube, new Vector3(0.05f, 0.91f, 0.035f), new Vector3(0.035f, 0.035f, 0.01f), crystal, new Vector3(0f, 0f, 45f), false);
         staff.SetActive(false);
 
-        // Бластер: корпус, ствол, рукоять и светящийся аккумулятор сбоку
+        // Бластер: корпус, планка с прицелом, кожух, три светящиеся катушки излучателя, рукоять со спуском, аккумулятор
         GameObject blaster = new GameObject("Blaster");
         blaster.transform.SetParent(pivot.transform, false);
         blaster.transform.localPosition = new Vector3(0.28f, -0.28f, 0.55f);
         Material cell = Mat("BlasterCell", new Color(0.4f, 0.9f, 1f), new Color(0.3f, 0.9f, 1f) * 3f);
-        Part(blaster.transform, PrimitiveType.Cube, Vector3.zero, new Vector3(0.1f, 0.13f, 0.34f), iron, Vector3.zero, false);
-        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0f, 0.02f, 0.27f), new Vector3(0.06f, 0.06f, 0.22f), steel, Vector3.zero, false);
-        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0f, 0.02f, 0.39f), new Vector3(0.08f, 0.08f, 0.03f), iron, Vector3.zero, false);
-        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0f, -0.13f, -0.07f), new Vector3(0.07f, 0.17f, 0.08f), iron, new Vector3(15f, 0f, 0f), false);
-        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0.062f, 0.01f, -0.02f), new Vector3(0.03f, 0.06f, 0.16f), cell, Vector3.zero, false).name = "Cell";
+        Part(blaster.transform, PrimitiveType.Cube, Vector3.zero, new Vector3(0.09f, 0.12f, 0.3f), iron, Vector3.zero, false);
+        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0f, -0.02f, -0.17f), new Vector3(0.07f, 0.09f, 0.06f), iron, new Vector3(-12f, 0f, 0f), false);
+        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0f, 0.072f, 0.01f), new Vector3(0.05f, 0.025f, 0.32f), steel, Vector3.zero, false).name = "Slide";
+        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0f, 0.1f, -0.1f), new Vector3(0.035f, 0.035f, 0.02f), steel, Vector3.zero, false);
+        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0f, 0.1f, 0.13f), new Vector3(0.01f, 0.035f, 0.01f), steel, Vector3.zero, false);
+        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0f, 0.01f, 0.24f), new Vector3(0.07f, 0.07f, 0.2f), steel, Vector3.zero, false);
+        for (int i = 0; i < 3; i++)
+            Part(blaster.transform, PrimitiveType.Cube, new Vector3(0f, 0.01f, 0.18f + i * 0.06f), new Vector3(0.095f, 0.095f, 0.018f), cell, new Vector3(0f, 0f, 45f), false).name = "Coil" + i;
+        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0f, 0.01f, 0.36f), new Vector3(0.05f, 0.05f, 0.04f), cell, new Vector3(0f, 0f, 45f), false).name = "Tip";
+        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0f, -0.13f, -0.07f), new Vector3(0.065f, 0.17f, 0.08f), darkWood, new Vector3(15f, 0f, 0f), false);
+        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0f, -0.085f, 0.01f), new Vector3(0.012f, 0.012f, 0.08f), iron, Vector3.zero, false);
+        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0f, -0.075f, 0.0f), new Vector3(0.01f, 0.04f, 0.012f), steel, new Vector3(-15f, 0f, 0f), false);
+        Part(blaster.transform, PrimitiveType.Cube, new Vector3(0.055f, 0.0f, -0.03f), new Vector3(0.03f, 0.06f, 0.16f), cell, Vector3.zero, false).name = "Cell";
+        for (int i = 0; i < 3; i++)
+            Part(blaster.transform, PrimitiveType.Cube, new Vector3(-0.047f, 0.02f, -0.09f + i * 0.04f), new Vector3(0.006f, 0.06f, 0.02f), steel, Vector3.zero, false);
         blaster.SetActive(false);
 
         foreach (GameObject tool in new[] { sword, hammer, axe, pick, bow, staff, blaster })

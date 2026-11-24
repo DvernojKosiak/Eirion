@@ -38,6 +38,13 @@ public class PlayerBlaster : MonoBehaviour
     string markText;
     float markUntil;
 
+    // красота: катушки излучателя светятся и греются, затвор отходит, вспышка у дула
+    Renderer[] coils;
+    Renderer tip;
+    Transform slide, flash;
+    Vector3 slideBase;
+    float heat, flashUntil;
+
     void OnEnable() { Local = this; }
     void OnDisable()
     {
@@ -60,6 +67,19 @@ public class PlayerBlaster : MonoBehaviour
             restRot = gun.localRotation;
             Transform c = gun.Find("Cell");
             if (c != null) cell = c.GetComponent<Renderer>();
+            coils = new Renderer[3];
+            for (int i = 0; i < 3; i++) { Transform t = gun.Find("Coil" + i); if (t != null) coils[i] = t.GetComponent<Renderer>(); }
+            Transform tp = gun.Find("Tip"); if (tp != null) tip = tp.GetComponent<Renderer>();
+            slide = gun.Find("Slide"); if (slide != null) slideBase = slide.localPosition;
+            flash = new GameObject("MuzzleFlash").transform;
+            flash.SetParent(gun, false);
+            flash.localPosition = new Vector3(0f, 0.01f, 0.42f);
+            Material fm = Magic.Glow(new Color(0.6f, 1f, 1f), 9f);
+            Magic.Piece(PrimitiveType.Cube, Vector3.zero, Quaternion.identity, Vector3.one, fm, flash).transform.localScale = new Vector3(0.16f, 0.02f, 0.005f);
+            Magic.Piece(PrimitiveType.Cube, Vector3.zero, Quaternion.identity, Vector3.one, fm, flash).transform.localScale = new Vector3(0.02f, 0.16f, 0.005f);
+            Magic.Piece(PrimitiveType.Cube, Vector3.zero, Quaternion.identity, Vector3.one, fm, flash).transform.localScale = new Vector3(0.07f, 0.07f, 0.005f);
+            foreach (Transform ch in flash) { ch.localPosition = Vector3.zero; ch.localRotation = Quaternion.identity; }
+            flash.gameObject.SetActive(false);
         }
     }
 
@@ -150,6 +170,9 @@ public class PlayerBlaster : MonoBehaviour
 
         bloom = Mathf.Min(3.5f, bloom + 0.55f);
         kick = 1f;
+        heat = Mathf.Min(1f, heat + 0.07f);
+        flashUntil = Time.time + 0.045f;
+        if (flash != null) flash.localRotation = Quaternion.Euler(0f, 0f, Random.Range(0f, 90f));
         PlayerCamera.Punch(new Vector3(-1.1f * Mathf.Lerp(1f, 0.5f, aim), Random.Range(-0.4f, 0.4f), 0f));
         CombatFx.Play(CombatFx.Snd.Laser, muzzle, 0.55f, Random.Range(0.95f, 1.1f));
         Magic.Flash(muzzle, new Color(0.4f, 0.95f, 1f), 3f, 4f, 0.06f);
@@ -166,9 +189,31 @@ public class PlayerBlaster : MonoBehaviour
             float t = (Time.time - rechargeStart) / rechargeTime;
             rot *= Quaternion.Euler(20f * Mathf.Sin(Mathf.Clamp01(t) * Mathf.PI), 0f, 35f * Mathf.Sin(Mathf.Clamp01(t) * Mathf.PI));
         }
+        WeaponSway.Apply(ref pos, ref rot, 1f - 0.7f * aim);   // в прицеле держишь твёрже
         float k = 1f - Mathf.Exp(-20f * Time.deltaTime);
         gun.localPosition = Vector3.Lerp(gun.localPosition, pos, k);
         gun.localRotation = Quaternion.Slerp(gun.localRotation, rot, k);
+
+        // катушки: каждый выстрел греет их, при очереди светятся ярче и белеют
+        heat = Mathf.MoveTowards(heat, 0f, Time.deltaTime * 0.35f);
+        if (flash != null) flash.gameObject.SetActive(Time.time < flashUntil);
+        if (slide != null) slide.localPosition = slideBase + Vector3.back * 0.035f * kick;
+        if (coils != null)
+            for (int i = 0; i < coils.Length; i++)
+            {
+                if (coils[i] == null) continue;
+                float pulse = Mathf.Clamp01(kick * 1.5f - i * 0.25f);   // волна света бежит к дулу
+                Color cc = Color.Lerp(new Color(0.3f, 0.85f, 1f), new Color(1f, 0.95f, 0.85f), heat * 0.7f);
+                coils[i].GetPropertyBlock(block);
+                block.SetColor("_EmissionColor", cc * (1.2f + 6f * pulse + 3f * heat + (recharging ? Mathf.Sin(Time.time * 18f + i) : 0f)));
+                coils[i].SetPropertyBlock(block);
+            }
+        if (tip != null)
+        {
+            tip.GetPropertyBlock(block);
+            block.SetColor("_EmissionColor", new Color(0.4f, 0.95f, 1f) * (1.5f + 8f * kick + 2f * heat));
+            tip.SetPropertyBlock(block);
+        }
 
         if (cell != null)
         {

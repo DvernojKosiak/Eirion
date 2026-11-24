@@ -710,8 +710,8 @@ public class Enemy : MonoBehaviour
                 break;
             case HitType.Blaster:
                 // луч света прожигает: больно, но почти не толкает
-                if (!brute) Interrupt(State.Flinch, 0.15f);
-                Knock(dir * 0.6f);
+                if (!brute) Interrupt(State.Flinch, 0.25f);
+                Knock(dir * 2.4f);                                // попадание толкает назад
                 break;
             case HitType.Trip:
                 // подкат по ногам: обычная тварь падает, громила только шатается
@@ -732,7 +732,12 @@ public class Enemy : MonoBehaviour
                     break;
                 }
                 if (part == BodyPartType.Head) Interrupt(State.Stagger, brute ? 0.3f : 0.7f);
-                else { Knock(dir * Mathf.Clamp(h.damage / 15f, 0.5f, 3f)); LimbEffect(part, h, brute, ref callout); }
+                else
+                {
+                    Knock(dir * Mathf.Clamp(h.damage / 9f, 1.2f, 5f) * (h.heavy ? 1.5f : 1f)); // стрела бьёт и отталкивает
+                    if (!brute) Interrupt(State.Flinch, h.heavy ? 0.45f : 0.25f);
+                    LimbEffect(part, h, brute, ref callout);
+                }
                 break;
         }
         Finish(part, strength, callout);
@@ -952,11 +957,21 @@ public class Enemy : MonoBehaviour
         return true;
     }
 
-    public void SetTkPoint(Vector3 p, ulong by) { if (telekinetic && HeldBy == (int)by) tkPoint = p; }
+    // Куда держащий тянет тварь: телекинезом — точка перед посохом, руками — у груди (и дуга броска)
+    float handAt = -100f;
+    public void SetTkPoint(Vector3 p, ulong by) { if (HeldBy == (int)by) { tkPoint = p; handAt = Time.time; } }
 
     void HoldInHands()
     {
         if (holder == null) { Release(); return; }
+        if (!telekinetic && Time.time - handAt < 0.3f)
+        {
+            // в руках: там, где держит игрок (он присылает точку), лицом к нему
+            transform.position = Vector3.Lerp(transform.position, tkPoint, 1f - Mathf.Exp(-25f * Time.deltaTime));
+            Face(holder.position - transform.position);
+            if (Time.time >= stateUntil) { EnemyManager.HurtPlayer((ulong)HeldBy, playerDamage * 0.7f, id); Release(); }
+            return;
+        }
         if (telekinetic)
         {
             // тварь сопротивляется: дёргается, тянет вниз; громила почти не отрывается от земли
@@ -1205,6 +1220,13 @@ public class Enemy : MonoBehaviour
             {
                 // держу посохом — показываю там, куда тяну, сразу
                 transform.position = Vector3.Lerp(transform.position, PlayerStaff.LocalTkPoint, 8f * Time.deltaTime);
+            }
+            else if (mine && CurrentState == State.Grabbed && PlayerCombat.LocalHoldId == id)
+            {
+                // держу руками — показываю точно в руках, без задержки сети
+                transform.position = PlayerCombat.LocalHoldPoint;
+                Vector3 to = me.transform.position - transform.position; to.y = 0f;
+                if (to.sqrMagnitude > 0.01f) transform.rotation = Quaternion.LookRotation(to);
             }
             else if (mine && CurrentState == State.Grabbed)
             {

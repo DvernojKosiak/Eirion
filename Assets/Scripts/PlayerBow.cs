@@ -164,8 +164,11 @@ public class PlayerBow : MonoBehaviour
         Vector3 aimPos = new Vector3(0.12f, -0.16f, 0.62f);
         Quaternion aimRot = Quaternion.Euler(0f, -3f, 6f);
         Vector3 shake = draw >= 0.99f ? Random.insideUnitSphere * 0.0025f : Vector3.zero;
-        bow.localPosition = Vector3.Lerp(restPos, aimPos, s) + shake + Vector3.back * 0.06f * shotKick;
-        bow.localRotation = Quaternion.Slerp(restRot, aimRot, s) * Quaternion.Euler(-10f * shotKick, 0f, 0f);
+        Vector3 bp = Vector3.Lerp(restPos, aimPos, s) + shake + Vector3.back * 0.06f * shotKick;
+        Quaternion br = Quaternion.Slerp(restRot, aimRot, s) * Quaternion.Euler(-10f * shotKick, 0f, 0f);
+        WeaponSway.Apply(ref bp, ref br, 1f - 0.6f * s);   // натянул — держишь твёрже
+        bow.localPosition = bp;
+        bow.localRotation = br;
 
         Vector3 nock = new Vector3(0f, 0f, RestNockZ - draw * PullZ);
         stringTop.SetPosition(0, TipTop); stringTop.SetPosition(1, nock);

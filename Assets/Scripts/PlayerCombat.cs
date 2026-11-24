@@ -155,8 +155,8 @@ public class PlayerCombat : MonoBehaviour
             Renderer body = GetComponent<Renderer>();
             if (body != null) l.GetComponent<Renderer>().sharedMaterial = body.sharedMaterial;
             l.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            l.SetActive(false);
-            leg = l.transform;
+            Destroy(l);                 // пинаем своей настоящей ногой (PlayerBody), отдельная нога не нужна
+            leg = null;
         }
     }
 
@@ -226,8 +226,11 @@ public class PlayerCombat : MonoBehaviour
         {
             if (IsHolding)
             {
-                if (mouse.leftButton.wasPressedThisFrame || kb.gKey.wasPressedThisFrame) ThrowHeld(false);
-                else if (kb.qKey.wasPressedThisFrame) ThrowHeld(true);
+                if (!throwing)
+                {
+                    if (mouse.leftButton.wasPressedThisFrame || kb.gKey.wasPressedThisFrame) ThrowHeld(false);
+                    else if (kb.qKey.wasPressedThisFrame) ThrowHeld(true);
+                }
             }
             else
             {
@@ -269,6 +272,7 @@ public class PlayerCombat : MonoBehaviour
         else if (chargeLook && !(health != null && health.IsBlocking)) PlayerCamera.LookScale = 1f;
         chargeLook = slowLook;
 
+        UpdateHold();
         UpdateSlide();
         UpdateSwing();
         UpdateEmbed();
@@ -683,25 +687,100 @@ public class PlayerCombat : MonoBehaviour
         return f * throwSpeed + Vector3.up * 2.5f;
     }
 
+    // Бросок — не сразу: герой разворачивается, заносит тварь и швыряет её всем телом
     void ThrowHeld(bool overShoulder)
     {
+        if (throwing || heldId < 0) return;
+        throwing = true;
+        throwOver = overShoulder;
+        throwStart = Time.time;
+        CombatFx.Play(CombatFx.Snd.Whoosh, transform.position + Vector3.up, 0.6f, 0.7f);
+    }
+
+    void ReleaseThrow()
+    {
+        throwing = false;
         Enemy e = EnemyManager.Instance != null ? EnemyManager.Instance.Find(heldId) : null;
         int id = heldId;
         heldId = -1;
+        LocalHoldId = -1;
         if (e == null) return;
-        if (overShoulder)
+        if (throwOver)
         {
-            // через себя: дугой над головой и об землю за спиной
+            // через себя: дугой над головой и со всей силы об землю за спиной
             EnemyManager.RequestHit(e, new HitInfo { damage = 20f, dir = Vector3.down, part = BodyPartType.Torso, type = HitType.Slash });
-            EnemyManager.RequestThrow(id, -transform.forward * 5f + Vector3.up * 8f, 8f);
-            PlayerCamera.Shake(0.3f);
+            EnemyManager.RequestThrow(id, -transform.forward * 3f + Vector3.down * 9f, 8f);
+            PlayerCamera.Shake(0.4f);
+            PlayerCamera.Punch(new Vector3(6f, 0f, 0f));
+            CombatFx.Play(CombatFx.Snd.Fall, e.transform.position, 1f, 0.8f);
         }
         else
         {
             EnemyManager.RequestThrow(id, ThrowVelocity(), 2f);
             PlayerCamera.Shake(0.2f);
+            PlayerCamera.Punch(new Vector3(-2f, -3f, 2f));
         }
         StartAttack(Attack.Throw);
+    }
+
+    // Где тварь в руках (позиция её ног). Держу у груди, ноги над землёй; при броске — по дуге
+    public static int LocalHoldId { get; private set; } = -1;
+    public static Vector3 LocalHoldPoint { get; private set; }
+    bool throwing, throwOver;
+    float throwStart, holdSend;
+
+    void UpdateHold()
+    {
+        if (heldId < 0) { LocalHoldId = -1; throwing = false; if (PlayerBody.Local != null) { PlayerBody.Local.HoldTarget = null; PlayerBody.Local.Twist = 0f; } return; }
+        Enemy e = EnemyManager.Instance != null ? EnemyManager.Instance.Find(heldId) : null;
+        if (e == null) return;
+        float sc = e.bodyScale;
+        float reach = 0.55f + 0.4f * sc;
+        Vector3 hold = new Vector3(0f, -0.75f, reach);        // ноги твари чуть над землёй, тело у моей груди
+        Vector3 local = hold;
+        float twist = 0f;
+        float t = Time.time;
+        if (throwing)
+        {
+            float dur = throwOver ? 0.55f : 0.42f;
+            float u = Mathf.Clamp01((t - throwStart) / dur);
+            if (!throwOver)
+            {
+                // замах вбок и назад, потом рывок вперёд-вверх
+                Vector3 back = new Vector3(0.85f, -0.6f, 0.15f), release = new Vector3(0f, -0.25f, reach + 0.7f);
+                if (u < 0.45f) { float w = Smooth(u / 0.45f); local = Vector3.Lerp(hold, back, w); twist = -45f * w; }
+                else { float w = (u - 0.45f) / 0.55f; w = w * w; local = Vector3.Lerp(back, release, w) + Vector3.up * Mathf.Sin(w * Mathf.PI) * 0.3f; twist = Mathf.Lerp(-45f, 40f, w); }
+            }
+            else
+            {
+                // через голову: поднимаю над собой и обрушиваю за спину
+                float a = Smooth(u) * Mathf.PI;                       // 0 — передо мной, π — за спиной
+                local = new Vector3(0f, -0.75f + Mathf.Sin(a) * 1.9f, Mathf.Cos(a) * (reach + 0.2f));
+            }
+            if (u >= 1f) { SetHold(e, transform.TransformPoint(local)); ReleaseThrow(); return; }
+        }
+        else
+        {
+            // тварь бьётся в руках
+            local += new Vector3(Mathf.Sin(t * 13f) * 0.04f, Mathf.Sin(t * 9f) * 0.03f, 0f);
+        }
+        SetHold(e, transform.TransformPoint(local));
+        if (PlayerBody.Local != null)
+        {
+            PlayerBody.Local.HoldTarget = LocalHoldPoint + Vector3.up * 0.95f * sc;
+            PlayerBody.Local.Twist = twist;
+        }
+    }
+
+    void SetHold(Enemy e, Vector3 p)
+    {
+        LocalHoldId = heldId;
+        LocalHoldPoint = p;
+        if (Net.IsHost || Time.time >= holdSend)
+        {
+            holdSend = Time.time + 0.05f;
+            EnemyManager.TkMove(heldId, p);
+        }
     }
 
     // Дуга полёта и место падения, пока держишь тварь
@@ -913,14 +992,9 @@ public class PlayerCombat : MonoBehaviour
             rot = restRotation * Quaternion.Euler(a, -a * 0.4f, 0f);
         }
 
-        // Нога при пинке
-        if (leg != null && attack == Attack.Kick)
-        {
-            float p = Mathf.Clamp01((now - attackStart) / attackDuration);
-            float k = Mathf.Sin(Mathf.Clamp01(p / 0.7f) * Mathf.PI);
-            leg.localPosition = new Vector3(0.12f, -1.2f + 0.35f * k, 0.15f + 0.95f * k);
-            leg.localRotation = Quaternion.Euler(-25f * k, 0f, 0f);
-        }
+        // Пинок — своей ногой (тело героя)
+        if (PlayerBody.Local != null)
+            PlayerBody.Local.KickP = attack == Attack.Kick ? Mathf.Clamp01((now - attackStart) / attackDuration) : -1f;
 
         // Блок: меч поперёк перед лицом. Удар в блок — меч дёргается
         bool blocking = hasSword && health != null && health.IsBlocking;

@@ -119,7 +119,7 @@ public class Arrow : MonoBehaviour
             EnemyManager.RequestHit(e, new HitInfo { damage = speed * 0.9f * (heavy ? 1.25f : 1f), dir = dir, part = bp.type, type = HitType.Arrow, heavy = heavy });
             if (mine) PlayerBow.HitMarker(bp.type, heavy);
         }
-        e.LocalReact((int)bp.type, dir, 0.6f);
+        e.LocalReact((int)bp.type, dir, heavy ? 1.4f : 1.1f);
         CombatFx.Ichor(h.point, -dir, heavy ? 10 : 5);
         CombatFx.Play(CombatFx.Snd.Flesh, h.point, 0.8f, 1.3f);
         if (mine) CombatFx.Hitstop(heavy ? 0.05f : 0.02f);

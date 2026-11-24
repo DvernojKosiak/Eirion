@@ -63,6 +63,11 @@ public class PlayerStaff : MonoBehaviour
     float tkDist, tkStart, tkSend;
     Vector3 tkPoint, tkPrev, tkVel;
 
+    // красота: камень парит и вращается, вокруг кружат искры, светит
+    Vector3 stoneBase;
+    Light stoneLight;
+    Transform[] motes;
+
     void OnEnable() { Local = this; EnemyManager.TkResult += OnTkResult; }
     void OnDisable()
     {
@@ -91,6 +96,18 @@ public class PlayerStaff : MonoBehaviour
                 fireOrb = Magic.Piece(PrimitiveType.Sphere, stone.position, Quaternion.identity, Vector3.one * 0.01f, Magic.Glow(new Color(1f, 0.5f, 0.12f), 5f), staff).transform;
                 fireOrb.localPosition = stone.localPosition + Vector3.up * 0.02f;
                 fireOrb.gameObject.SetActive(false);
+                stoneBase = stone.localPosition;
+                GameObject lg = new GameObject("StoneLight");
+                lg.transform.SetParent(stone, false);
+                stoneLight = lg.AddComponent<Light>();
+                stoneLight.type = LightType.Point;
+                stoneLight.color = new Color(0.65f, 0.4f, 1f);
+                stoneLight.range = 2.5f;
+                stoneLight.intensity = 1f;
+                stoneLight.shadows = LightShadows.None;
+                motes = new Transform[5];
+                for (int i = 0; i < motes.Length; i++)
+                    motes[i] = Magic.Piece(PrimitiveType.Cube, stone.position, Quaternion.identity, Vector3.one * 0.015f, Magic.Glow(new Color(0.75f, 0.55f, 1f), 6f), staff).transform;
             }
             GameObject b = new GameObject("TkBeam");
             b.layer = 2;
@@ -373,10 +390,28 @@ public class PlayerStaff : MonoBehaviour
         pos += Vector3.forward * 0.12f * Mathf.Sin(castKick * Mathf.PI);
         rot *= Quaternion.Euler(-25f * castKick, 0f, 0f);
         if (charge >= 0.99f || tkHolding) pos += Random.insideUnitSphere * 0.003f;
+        WeaponSway.Apply(ref pos, ref rot);
 
         float k = 1f - Mathf.Exp(-14f * Time.deltaTime);
         staff.localPosition = Vector3.Lerp(staff.localPosition, pos, k);
         staff.localRotation = Quaternion.Slerp(staff.localRotation, rot, k);
+
+        // камень парит над когтями и медленно вращается, вокруг кружат искры
+        float tm = Time.time;
+        if (stone != null)
+        {
+            stone.localPosition = stoneBase + Vector3.up * (0.012f * Mathf.Sin(tm * 2.2f) + 0.02f * c);
+            stone.localRotation = Quaternion.Euler(45f, tm * (40f + 260f * c), 45f);
+            if (motes != null)
+                for (int i = 0; i < motes.Length; i++)
+                {
+                    float a = tm * (1.6f + 3f * c) + i * Mathf.PI * 2f / motes.Length;
+                    float r = 0.09f + 0.02f * Mathf.Sin(tm * 3f + i) - 0.03f * c;
+                    motes[i].localPosition = stone.localPosition + new Vector3(Mathf.Cos(a) * r, Mathf.Sin(a * 1.3f + i) * 0.05f, Mathf.Sin(a) * r);
+                    motes[i].localScale = Vector3.one * (0.012f + 0.01f * c + 0.004f * Mathf.Sin(tm * 9f + i));
+                }
+        }
+        if (stoneLight != null) stoneLight.intensity = 0.8f + 3f * c + (aiming || tkHolding ? 2f : 0f) + Mathf.PerlinNoise(tm * 5f, 0f) * 0.4f;
 
         // камень светится сильнее, когда копишь силу
         if (stoneRenderer != null)

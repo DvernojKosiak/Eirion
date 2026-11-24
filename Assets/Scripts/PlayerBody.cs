@@ -24,6 +24,11 @@ public class PlayerBody : MonoBehaviour
     Vector2 lean, leanVel;               // x — вперёд/назад, y — вбок (градусы)
     float flail;                         // руки разлетаются после удара
     float hipYaw;
+
+    // Управляют бой и захват (только у своего игрока)
+    public float KickP = -1f;            // пинок: 0..1 — сколько прошло, меньше 0 — не пинаю
+    public Vector3? HoldTarget;          // держу тварь — обе руки тянутся к ней
+    public float Twist;                  // разворот корпуса (бросок)
     float air;
 
     void Start()
@@ -173,7 +178,19 @@ public class PlayerBody : MonoBehaviour
         Quaternion hipRot = Quaternion.Euler(lean.x * 0.3f - 30f * slide, hipYaw, lean.y * 0.3f);
         if (dead) { hipPos = new Vector3(0f, -0.8f, 0f); hipRot = Quaternion.Euler(-80f, 0f, 0f); }
 
-        Quaternion torsoRot = Quaternion.Euler(lean.x * 0.7f - 25f * slide, -hipYaw * 0.8f + s * 5f * amp, lean.y * 0.7f);
+        // пинок: колено к груди, потом нога выстреливает вперёд, потом назад
+        float kickT = -1f, kickBend = 0f, kick = 0f;
+        if (local && KickP >= 0f)
+        {
+            float p = KickP;
+            if (p < 0.3f) { float w = p / 0.3f; kickT = -75f * w; kickBend = 100f * w; kick = w; }
+            else if (p < 0.55f) { float w = (p - 0.3f) / 0.25f; kickT = Mathf.Lerp(-75f, -105f, w); kickBend = Mathf.Lerp(100f, 0f, w * w); kick = 1f; }
+            else if (p < 0.7f) { kickT = -105f; kickBend = 0f; kick = 1f; }
+            else { float w = (p - 0.7f) / 0.3f; kickT = Mathf.Lerp(-105f, 0f, w); kickBend = Mathf.Lerp(0f, 20f, Mathf.Sin(w * Mathf.PI)); kick = 1f - w; }
+        }
+
+        Quaternion torsoRot = Quaternion.Euler(lean.x * 0.7f - 25f * slide - 15f * kick, -hipYaw * 0.8f + s * 5f * amp + Twist, lean.y * 0.7f);
+        hipRot *= Quaternion.Euler(0f, Twist * 0.4f, 0f);
 
         // ноги
         float thigh = 42f * amp, knee = 60f * amp;
@@ -187,6 +204,12 @@ public class PlayerBody : MonoBehaviour
             tR = Quaternion.Slerp(tR, Quaternion.Euler(-20f, 0f, 0f), slide); kR = Quaternion.Slerp(kR, Quaternion.Euler(95f, 0f, 0f), slide);
         }
 
+        if (kickT > -1f || kick > 0f)
+        {
+            tR = Quaternion.Euler(kickT, 0f, 0f); kR = Quaternion.Euler(kickBend, 0f, 0f);
+            tL = Quaternion.Euler(5f * kick, 0f, 0f); kL = Quaternion.Euler(8f * kick, 0f, 0f);  // опорная нога прямая
+        }
+
         // руки: машут при ходьбе, разлетаются от удара
         float swing = 30f * amp;
         float fl = flail * flail;
@@ -194,9 +217,20 @@ public class PlayerBody : MonoBehaviour
         Quaternion aR = Quaternion.Euler(-s * swing - 60f * fl - 40f * air, 0f, 12f + 70f * fl + 30f * air);
         Quaternion eL = Quaternion.Euler(-20f - 15f * amp, 0f, 0f), eR = eL;
 
+        if (kick > 0f) { aL *= Quaternion.Euler(0f, 0f, -40f * kick); aR *= Quaternion.Euler(0f, 0f, 40f * kick); } // руки в стороны — держит равновесие
+
         // с оружием в руке (видно от третьего лица и у чужих): правая рука тянется к оружию
         Transform tool = hotbar != null ? hotbar.CurrentModel : null;
-        if (tool != null && tool.gameObject.activeInHierarchy && !dead)
+        if (local && HoldTarget.HasValue && !dead)
+        {
+            // держу тварь: обе руки обхватывают её
+            Vector3 tp = torso.InverseTransformPoint(HoldTarget.Value);
+            Vector3 dl = tp - armL.localPosition + Vector3.right * 0.15f, dr = tp - armR.localPosition - Vector3.right * 0.15f;
+            if (dl.sqrMagnitude > 0.01f) aL = Quaternion.FromToRotation(Vector3.down, dl.normalized);
+            if (dr.sqrMagnitude > 0.01f) aR = Quaternion.FromToRotation(Vector3.down, dr.normalized);
+            eL = eR = Quaternion.Euler(-30f, 0f, 0f);
+        }
+        else if (tool != null && tool.gameObject.activeInHierarchy && !dead)
         {
             Vector3 to = torso.InverseTransformPoint(tool.position) - armR.localPosition;
             if (to.sqrMagnitude > 0.01f) { aR = Quaternion.FromToRotation(Vector3.down, to.normalized); eR = Quaternion.Euler(-10f, 0f, 0f); }

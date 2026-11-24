@@ -375,7 +375,7 @@ public class BlasterBolt : MonoBehaviour
             EnemyManager.RequestHit(e, new HitInfo { damage = 11f, dir = dir, part = bp.type, type = HitType.Blaster });
             if (PlayerBlaster.Local != null) PlayerBlaster.Local.HitMarker(bp.type);
         }
-        e.LocalReact((int)bp.type, dir, 0.45f);
+        e.LocalReact((int)bp.type, dir, 0.95f);
         CombatFx.Play(CombatFx.Snd.Sizzle, h.point, 0.8f);
         CombatFx.Ichor(h.point, -dir, 3);
         for (int i = 0; i < 3; i++) CombatFx.Smoke(h.point, 0.25f);

@@ -150,10 +150,16 @@ public class Enemy : MonoBehaviour
     void OnDisable() { All.Remove(this); }
 
     public bool Lost(BodyPartType p) => (LostMask & (1 << (int)p)) != 0;
+    // Ранена (но не отрублена): бит 8+часть в том же LostMask — так рана видна всем игрокам по сети
+    public bool Wounded(BodyPartType p) => !Lost(p) && (LostMask & (1 << (8 + (int)p))) != 0;
+    int LegsWounded => (Wounded(BodyPartType.LegL) ? 1 : 0) + (Wounded(BodyPartType.LegR) ? 1 : 0);
+    int ArmsWounded => (Wounded(BodyPartType.ArmL) ? 1 : 0) + (Wounded(BodyPartType.ArmR) ? 1 : 0);
     int LegsLost => (Lost(BodyPartType.LegL) ? 1 : 0) + (Lost(BodyPartType.LegR) ? 1 : 0);
     int ArmsLost => (Lost(BodyPartType.ArmL) ? 1 : 0) + (Lost(BodyPartType.ArmR) ? 1 : 0);
-    float SpeedMul => LegsLost == 2 ? 0.25f : LegsLost == 1 ? 0.3f : Time.time < limpUntil ? 0.6f : 1f;
-    float DamageMul => ArmsLost == 2 ? 0.35f : ArmsLost == 1 ? 0.65f : 1f;
+    // раненая нога — хромает всё время (обе — еле ковыляет); свежий удар по ноге — ещё медленнее
+    float SpeedMul => LegsLost == 2 ? 0.25f : LegsLost == 1 ? 0.3f : Mathf.Min(LegsWounded == 2 ? 0.45f : LegsWounded == 1 ? 0.65f : 1f, Time.time < limpUntil ? 0.6f : 1f);
+    // раненая рука бьёт слабее, но не так, как совсем без руки
+    float DamageMul => Mathf.Max(0.3f, 1f - 0.35f * ArmsLost - 0.18f * ArmsWounded);
 
     // Характеристики вида. wave — номер набега (с каждым тварь крепче)
     public void ApplyKind(EnemyKind k, int wave)
@@ -279,6 +285,10 @@ public class Enemy : MonoBehaviour
                 if (Time.time >= stateUntil) SetState(State.Move, 0f);
                 return;
             case State.Down:
+                // встаёт не рывком: сначала на колено, потом на ноги
+                MoveBody(Vector3.zero, 0f);
+                if (Time.time >= stateUntil) SetState(LegsLost == 0 ? State.Kneel : State.Move, kind == EnemyKind.Brute ? 0.35f : 0.55f);
+                return;
             case State.Flinch:
             case State.Stagger:
             case State.Kneel:
@@ -570,6 +580,9 @@ public class Enemy : MonoBehaviour
         Health -= dmg;
         flash = 1f;
         if (part != BodyPartType.Torso) partHp[(int)part] -= dmg;
+        // рана: рука или нога потеряла почти половину «здоровья» — дальше работает плохо (стрелой, лучом, мечом — неважно)
+        if ((BodyPart.IsArm(part) || BodyPart.IsLeg(part)) && partHp[(int)part] < partMax[(int)part] * 0.55f)
+            LostMask |= 1 << (8 + (int)part);
 
         // Мешок с ядом — взрыв
         if (part == BodyPartType.Sack && !Lost(BodyPartType.Sack))
@@ -1063,7 +1076,11 @@ public class Enemy : MonoBehaviour
         if (rb != null) DestroyImmediate(rb);
         if (throwCol != null) DestroyImmediate(throwCol);
         rb = null; throwCol = null;
+        // тело выпрямляем, но картинка остаётся как лежала — дальше плавно перетекает в позу «лежит» и встаёт
+        Quaternion was = transform.rotation;
         transform.rotation = Quaternion.Euler(0f, transform.eulerAngles.y, 0f);
+        visRot = Quaternion.Inverse(transform.rotation) * was;
+        if (visual != null) visual.localRotation = visRot;
         if (cc != null) cc.enabled = true;
         verticalVelocity = 0f;
         SetState(State.Down, kind == EnemyKind.Brute ? 0.6f : 1.1f); // лежит, потом встаёт
@@ -1205,6 +1222,8 @@ public class Enemy : MonoBehaviour
     Vector3 recoilRot, recoilRotVel, recoilPos, recoilPosVel; // отдача всего тела от удара
     float hitShake;
     Quaternion visRot = Quaternion.identity;
+    bool downProne;
+    State lastVisState;
     Vector3 visPos;
 
     public void Lunge() { lunge = 1f; }
@@ -1275,10 +1294,23 @@ public class Enemy : MonoBehaviour
             case State.Impaled: rot = Quaternion.Euler(-22f, 0f, Mathf.Sin(t * 22f) * 8f); break;
             case State.Pinned: rot = Quaternion.Euler(-8f, 0f, Mathf.Sin(t * 30f) * 4f); break;
             case State.Kneel: rot = Quaternion.Euler(12f, 0f, 0f); pos.y = -0.38f * bodyScale; break;
-            case State.Down: rot = Quaternion.Euler(-88f, 0f, 0f); pos.y = 0.25f * bodyScale; break;
+            case State.Down:
+                // лежит на спине или ничком — как упала; дышит, ворочается
+                rot = Quaternion.Euler(downProne ? 86f : -86f, 0f, Mathf.Sin(t * 1.7f + id) * 6f);
+                pos.y = (0.27f + 0.02f * Mathf.Sin(t * 3f)) * bodyScale;
+                break;
             default:
                 // наклон по движению: отбросило назад — откидывается, вбок — заваливается
                 rot = Quaternion.Euler(Mathf.Clamp(visVel.z * 2f, -15f, 6f), 0f, Mathf.Clamp(-visVel.x * 2.5f, -12f, 12f));
+                // хромает: на шаге раненой ногой тело проваливается и кренится в её сторону
+                if (legsLost == 0 && LegsWounded == 1)
+                {
+                    float ws = Wounded(BodyPartType.LegL) ? 1f : -1f;
+                    float step = Mathf.Max(0f, Mathf.Sin(walkPhase) * ws);
+                    float mv = Mathf.Clamp01(visSpeed / 2f);
+                    rot *= Quaternion.Euler(4f * step * mv, 0f, 9f * step * mv * ws);
+                    pos.y -= 0.07f * step * mv * bodyScale;
+                }
                 break;
         }
         // Без ноги не устоять — ползёт на брюхе, подтягиваясь руками.
@@ -1294,6 +1326,17 @@ public class Enemy : MonoBehaviour
             float r = th * Mathf.Deg2Rad;
             pos.y = (0.3f - 0.9f * Mathf.Cos(r)) * bodyScale;                    // бёдра (0.9 над ступнями) — на высоте 0.3
             pos.z += -0.9f * Mathf.Sin(r) * 0.7f * bodyScale;                    // тело тянется вперёд от бёдер, а не улетает вперёд
+        }
+        // упала — запоминаем, на спину или ничком (у копии берём, как крутилась)
+        if (CurrentState != lastVisState)
+        {
+            if (lastVisState == State.Thrown)
+            {
+                if (!Simulated) visRot = visual.localRotation;
+                downProne = (visRot * Vector3.up).z > 0f;
+            }
+            else if (CurrentState == State.Down) downProne = false;
+            lastVisState = CurrentState;
         }
         if (CurrentState == State.Thrown && !Simulated)
         {
@@ -1311,11 +1354,13 @@ public class Enemy : MonoBehaviour
             recoilPos += recoilPosVel * dt;
             hitShake = Mathf.MoveTowards(hitShake, 0f, dt * 0.8f);
             Vector3 jitter = hitShake > 0f ? new Vector3(Mathf.Sin(t * 90f), 0f, Mathf.Cos(t * 77f)) * hitShake * 0.15f : Vector3.zero;
-            visRot = Quaternion.Slerp(visRot, rot, 14f * dt);
+            // падает и встаёт мягче, чем дёргается от ударов
+            bool slowPose = CurrentState == State.Down || CurrentState == State.Kneel;
+            visRot = Quaternion.Slerp(visRot, rot, (slowPose ? 5f : 14f) * dt);
             float ra = recoilRot.magnitude;
             Quaternion rr = ra > 0.01f ? Quaternion.AngleAxis(ra, recoilRot / ra) : Quaternion.identity;
             visual.localRotation = rr * visRot;
-            visPos = Vector3.Lerp(visPos, pos, 20f * dt);
+            visPos = Vector3.Lerp(visPos, pos, (slowPose ? 7f : 20f) * dt);
             pos = visPos + recoilPos + jitter;
         }
         if (CurrentState == State.Thrown) visPos = Vector3.Lerp(visual.localPosition, pos, 20f * dt);
@@ -1410,9 +1455,25 @@ public class Enemy : MonoBehaviour
                     if (bp.type == BodyPartType.Head) e.x = 25f;
                     break;
                 case State.Down:
-                    if (arm) e.x = -60f;
+                    // лежит не бревном: руки шарят и упираются в землю, ноги сучат, голова поднимается
+                    if (arm) e = new Vector3(-60f + Mathf.Sin(t * 2.3f + i) * 25f, 0f, Mathf.Sin(t * 1.9f + i * 1.7f) * 20f * side);
+                    if (leg) e.x = Mathf.Sin(t * 2.1f + i * 2f) * 25f + 10f;
+                    if (bp.type == BodyPartType.Head) e.x = (downProne ? -25f : 30f) + Mathf.Sin(t * 1.3f) * 10f;
+                    if (bp.type == BodyPartType.Torso) e.x = Mathf.Sin(t * 1.6f) * 8f;
+                    break;
+                case State.Thrown:
+                    // в полёте руки и ноги болтаются и машут, а не застывают
+                    if (arm) e = new Vector3(-70f + Mathf.Sin(t * 13f + i) * 55f, 0f, (40f + Mathf.Sin(t * 11f + i) * 30f) * side);
+                    if (leg) e.x = Mathf.Sin(t * 12f + i * 2f) * 45f;
+                    if (bp.type == BodyPartType.Head) e.x = Mathf.Sin(t * 9f) * 20f;
                     break;
                 default:
+                    if (legsLost == 0 && Wounded(bp.type))
+                    {
+                        // раненая нога почти не сгибается и ступает коротко; раненая рука висит плетью
+                        if (leg) e.x *= 0.35f;
+                        if (arm) e.x = 18f + Mathf.Sin(walkPhase) * 6f;
+                    }
                     if (legsLost >= 1)
                     {
                         // ползёт: руки по очереди выбрасываются вперёд, цепляются за землю и подтягивают тело
@@ -1467,7 +1528,7 @@ public class Enemy : MonoBehaviour
                 r.linearDamping = 0.2f;
                 r.angularDamping = 0.8f;
                 if (bp.type == BodyPartType.Torso) { torsoRb = r; r.angularVelocity = Random.insideUnitSphere * 3f; }
-                else limbs.Add(bp);
+                else { limbs.Add(bp); r.angularVelocity = Random.insideUnitSphere * 6f; } // руки-ноги мотаются, а не застывают
             }
             foreach (BodyPart bp in limbs)
             {
@@ -1477,10 +1538,12 @@ public class Enemy : MonoBehaviour
                 j.anchor = Vector3.zero;
                 j.axis = Vector3.right;
                 j.swingAxis = Vector3.forward;
-                j.lowTwistLimit = new SoftJointLimit { limit = -35f };
-                j.highTwistLimit = new SoftJointLimit { limit = 35f };
-                j.swing1Limit = new SoftJointLimit { limit = 55f };
-                j.swing2Limit = new SoftJointLimit { limit = 40f };
+                // суставы мягче и свободнее — тело оседает и складывается, а не стоит колом
+                j.lowTwistLimit = new SoftJointLimit { limit = -50f };
+                j.highTwistLimit = new SoftJointLimit { limit = 50f };
+                j.swing1Limit = new SoftJointLimit { limit = 80f };
+                j.swing2Limit = new SoftJointLimit { limit = 55f };
+                j.enableProjection = true;
             }
         }
         if (torsoRb == null)

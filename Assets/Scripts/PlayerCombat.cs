@@ -888,8 +888,8 @@ public class PlayerCombat : MonoBehaviour
         Vector3 side = new Vector3(s.x, s.y, 0f);
         // клинок никогда не смотрит назад, в тебя: на краях дуги он уходит вбок, а не за спину
         float fw = Mathf.Max(Mathf.Cos(th), -0.1f);
-        dl = (Vector3.forward * fw + side * Mathf.Sin(th) + Vector3.forward * 0.35f).normalized;
-        hand = new Vector3(0.15f, -0.3f, 0.3f) + side * (0.25f + 0.17f * amp) * Mathf.Sin(th) + Vector3.forward * (0.12f + 0.08f * amp) * Mathf.Max(Mathf.Cos(th), -0.25f);
+        dl = (Vector3.forward * fw + side * Mathf.Sin(th) + Vector3.forward * 0.45f).normalized;
+        hand = new Vector3(0.15f, -0.3f, 0.3f) + side * (0.25f + 0.17f * amp) * Mathf.Sin(th) + Vector3.forward * (0.18f + 0.14f * amp) * Mathf.Max(Mathf.Cos(th), -0.25f);   // в середине удара рука выносится вперёд — выпад
     }
 
     static float Smooth(float x) { x = Mathf.Clamp01(x); return x * x * (3f - 2f * x); }

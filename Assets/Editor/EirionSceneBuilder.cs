@@ -1135,9 +1135,9 @@ public static class EirionSceneBuilder
         sword.transform.SetParent(pivot.transform, false);
         sword.transform.localPosition = new Vector3(0.45f, -0.35f, 0.55f);
         sword.transform.localRotation = Quaternion.Euler(60f, 0f, 0f);
-        // клинок длинный (1.4 м): бьёт ровно то, что видно на экране
-        Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, 0.78f, 0f), new Vector3(0.07f, 1.4f, 0.02f), steel, Vector3.zero, false);
-        Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, 1.5f, 0f), new Vector3(0.045f, 0.06f, 0.018f), steel, new Vector3(0f, 0f, 45f), false); // остриё
+        // клинок длинный (1.65 м): бьёт ровно то, что видно на экране — не дальше и не ближе
+        Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, 0.905f, 0f), new Vector3(0.07f, 1.65f, 0.02f), steel, Vector3.zero, false);
+        Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, 1.75f, 0f), new Vector3(0.045f, 0.06f, 0.018f), steel, new Vector3(0f, 0f, 45f), false); // остриё
         Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, 0.04f, 0f), new Vector3(0.25f, 0.04f, 0.05f), darkWood, Vector3.zero, false);
         Part(sword.transform, PrimitiveType.Cube, new Vector3(0f, -0.08f, 0f), new Vector3(0.04f, 0.2f, 0.04f), darkWood, Vector3.zero, false);
 

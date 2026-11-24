@@ -1,6 +1,6 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
---- !u!1 &873381224647568649
+--- !u!1 &1992560427677432034
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -8,9 +8,69 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 7824027866017567549}
-  - component: {fileID: 8693335885108240789}
-  - component: {fileID: 7596299300597705244}
+  - component: {fileID: 7506259248220285337}
+  - component: {fileID: 2187270804721100212}
+  m_Layer: 0
+  m_Name: PlankWall
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &7506259248220285337
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1992560427677432034}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 2035803787155361309}
+  - {fileID: 4050891970552776302}
+  - {fileID: 8494806862250517862}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &2187270804721100212
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1992560427677432034}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d7defc8f372453e4b94600186204aa8a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::BuildPiece
+  pieceId: PlankWall
+  netId: 0
+  displayName: "\u0421\u0442\u0435\u043D\u0430 \u0438\u0437 \u0434\u043E\u0441\u043E\u043A"
+  category: "\u0414\u0435\u0440\u0435\u0432\u043E"
+  maxHealth: 250
+  size: {x: 4, y: 3, z: 0.3}
+  costTypes: 02000000i
+  costAmounts: 04000000i
+  requiredStation: 1
+  station: 0
+  buildable: 1
+  village: 0
+  locked: 0
+--- !u!1 &2599528705687634219
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 4050891970552776302}
+  - component: {fileID: 6874476803355375332}
+  - component: {fileID: 7880299692984548770}
   m_Layer: 0
   m_Name: Cube
   m_TagString: Untagged
@@ -18,13 +78,13 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!4 &7824027866017567549
+--- !u!4 &4050891970552776302
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 873381224647568649}
+  m_GameObject: {fileID: 2599528705687634219}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: -1.9, y: 1.5, z: 0}
@@ -33,21 +93,21 @@ Transform:
   m_Children: []
   m_Father: {fileID: 7506259248220285337}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!33 &8693335885108240789
+--- !u!33 &6874476803355375332
 MeshFilter:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 873381224647568649}
+  m_GameObject: {fileID: 2599528705687634219}
   m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
---- !u!23 &7596299300597705244
+--- !u!23 &7880299692984548770
 MeshRenderer:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 873381224647568649}
+  m_GameObject: {fileID: 2599528705687634219}
   m_Enabled: 1
   m_CastShadows: 1
   m_ReceiveShadows: 1
@@ -90,66 +150,6 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!1 &1992560427677432034
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 7506259248220285337}
-  - component: {fileID: 2187270804721100212}
-  m_Layer: 0
-  m_Name: PlankWall
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &7506259248220285337
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1992560427677432034}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children:
-  - {fileID: 2035803787155361309}
-  - {fileID: 7824027866017567549}
-  - {fileID: 346876352483491064}
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &2187270804721100212
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1992560427677432034}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d7defc8f372453e4b94600186204aa8a, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::BuildPiece
-  pieceId: PlankWall
-  netId: 0
-  displayName: "\u0421\u0442\u0435\u043D\u0430 \u0438\u0437 \u0434\u043E\u0441\u043E\u043A"
-  category: "\u0414\u0435\u0440\u0435\u0432\u043E"
-  maxHealth: 250
-  size: {x: 4, y: 3, z: 0.3}
-  costTypes: 02000000i
-  costAmounts: 04000000i
-  requiredStation: 1
-  station: 0
-  buildable: 1
-  village: 0
-  locked: 0
 --- !u!1 &3103706923929520759
 GameObject:
   m_ObjectHideFlags: 0
@@ -262,7 +262,7 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!1 &6098135590875048394
+--- !u!1 &6059436321794405002
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -270,9 +270,9 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 346876352483491064}
-  - component: {fileID: 4125824323079285191}
-  - component: {fileID: 4091878499412953869}
+  - component: {fileID: 8494806862250517862}
+  - component: {fileID: 2057886104827909755}
+  - component: {fileID: 3683634246905832388}
   m_Layer: 0
   m_Name: Cube
   m_TagString: Untagged
@@ -280,13 +280,13 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!4 &346876352483491064
+--- !u!4 &8494806862250517862
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 6098135590875048394}
+  m_GameObject: {fileID: 6059436321794405002}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 1.9, y: 1.5, z: 0}
@@ -295,21 +295,21 @@ Transform:
   m_Children: []
   m_Father: {fileID: 7506259248220285337}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!33 &4125824323079285191
+--- !u!33 &2057886104827909755
 MeshFilter:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 6098135590875048394}
+  m_GameObject: {fileID: 6059436321794405002}
   m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
---- !u!23 &4091878499412953869
+--- !u!23 &3683634246905832388
 MeshRenderer:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 6098135590875048394}
+  m_GameObject: {fileID: 6059436321794405002}
   m_Enabled: 1
   m_CastShadows: 1
   m_ReceiveShadows: 1

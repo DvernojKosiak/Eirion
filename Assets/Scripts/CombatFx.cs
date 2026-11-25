@@ -3,6 +3,10 @@ using UnityEngine;
 // «Сочность» ударов: короткое замедление времени в момент попадания (hitstop) и искры.
 public static class CombatFx
 {
+    // ЗАМЕДЛЕНИЕ ВРЕМЕНИ: false — выключено совсем (и подвисание при ударе, и «кино» на добивании,
+    // и замедление твари, в которую вошёл клинок). Чтобы вернуть — поставь true.
+    public static bool SlowMotion = false;
+
     static float stopUntil, readyAt;
     static bool stopping;
 
@@ -10,6 +14,7 @@ public static class CombatFx
     // Не до полной остановки и не чаще раза в 0.15 сек, чтобы не дёргалось.
     public static void Hitstop(float duration)
     {
+        if (!SlowMotion) return;
         if (!stopping && Time.unscaledTime < readyAt) return;
         stopUntil = Mathf.Max(stopUntil, Time.unscaledTime + Mathf.Min(duration, 0.09f));
         stopping = true;
@@ -20,6 +25,7 @@ public static class CombatFx
     static float slowUntil, slowScale = 1f;
     public static void SlowMo(float duration, float scale)
     {
+        if (!SlowMotion) return;
         slowUntil = Mathf.Max(slowUntil, Time.unscaledTime + duration);
         slowScale = Mathf.Clamp(scale, 0.1f, 1f);
     }

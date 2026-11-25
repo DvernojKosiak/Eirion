@@ -10,10 +10,15 @@ public class BodyPart : MonoBehaviour
     public Enemy owner;
     public BodyPartType type;
     public Quaternion baseRotation;
+    public Transform bend;                            // колено или локоть (у рук и ног), null — не гнётся
 
     [System.NonSerialized] public Vector3 react;     // насколько сустав сейчас отклонён ударом (градусы, ось — в теле твари)
     [System.NonSerialized] public Vector3 reactVel;
     [System.NonSerialized] public bool lost;         // отрублена
+    // «болтанка»: конец руки или ноги — как грузик на верёвке (тянет вниз, отстаёт, когда тело дёргается)
+    [System.NonSerialized] public Vector3 tip, tipVel;
+    [System.NonSerialized] public bool tipInit;
+    [System.NonSerialized] public float limp;        // 0 — двигается сам (анимация), 1 — висит и болтается
 
     public static bool IsArm(BodyPartType t) => t == BodyPartType.ArmL || t == BodyPartType.ArmR;
     public static bool IsLeg(BodyPartType t) => t == BodyPartType.LegL || t == BodyPartType.LegR;
@@ -43,8 +48,11 @@ public static class EnemyBody
         for (int s = -1; s <= 1; s += 2)
         {
             BodyPart leg = Pivot(vis, s < 0 ? BodyPartType.LegL : BodyPartType.LegR, new Vector3(0.22f * s, 0.9f, 0f), Vector3.zero);
-            Prim(leg.transform, PrimitiveType.Cube, new Vector3(0f, -0.45f, 0f), new Vector3(0.2f, 0.9f, 0.22f), Vector3.zero, body, true);
-            Prim(leg.transform, PrimitiveType.Cube, new Vector3(0f, -0.87f, 0.1f), new Vector3(0.22f, 0.07f, 0.36f), Vector3.zero, body, false);
+            Prim(leg.transform, PrimitiveType.Cube, new Vector3(0f, -0.225f, 0f), new Vector3(0.2f, 0.48f, 0.22f), Vector3.zero, body, true);   // бедро
+            Transform knee = Bend(leg.transform, "Knee", new Vector3(0f, -0.45f, 0f));
+            Prim(knee, PrimitiveType.Cube, new Vector3(0f, -0.21f, 0f), new Vector3(0.18f, 0.46f, 0.2f), Vector3.zero, body, true);              // голень
+            Prim(knee, PrimitiveType.Cube, new Vector3(0f, -0.42f, 0.1f), new Vector3(0.22f, 0.07f, 0.36f), Vector3.zero, body, false);          // ступня
+            leg.bend = knee;
             parts[(int)leg.type] = leg;
         }
 
@@ -72,8 +80,11 @@ public static class EnemyBody
         for (int s = -1; s <= 1; s += 2)
         {
             BodyPart arm = Pivot(torso.transform, s < 0 ? BodyPartType.ArmL : BodyPartType.ArmR, new Vector3(0.45f * s, 0.62f, 0.05f), new Vector3(-40f, 0f, -8f * s));
-            Prim(arm.transform, PrimitiveType.Cube, new Vector3(0f, -0.33f, 0f), new Vector3(0.15f, 0.68f, 0.15f), Vector3.zero, body, true);
-            Prim(arm.transform, PrimitiveType.Cube, new Vector3(0f, -0.7f, 0.1f), new Vector3(0.07f, 0.07f, 0.3f), Vector3.zero, body, false);
+            Prim(arm.transform, PrimitiveType.Cube, new Vector3(0f, -0.17f, 0f), new Vector3(0.15f, 0.37f, 0.15f), Vector3.zero, body, true);   // плечо
+            Transform elbow = Bend(arm.transform, "Elbow", new Vector3(0f, -0.34f, 0f));
+            Prim(elbow, PrimitiveType.Cube, new Vector3(0f, -0.17f, 0f), new Vector3(0.13f, 0.36f, 0.13f), Vector3.zero, body, true);          // предплечье
+            Prim(elbow, PrimitiveType.Cube, new Vector3(0f, -0.36f, 0.1f), new Vector3(0.07f, 0.07f, 0.3f), Vector3.zero, body, false);          // коготь
+            arm.bend = elbow;
             parts[(int)arm.type] = arm;
         }
 
@@ -85,6 +96,14 @@ public static class EnemyBody
             parts[(int)BodyPartType.Sack] = sack;
         }
         return parts;
+    }
+
+    static Transform Bend(Transform parent, string name, Vector3 pos)
+    {
+        GameObject go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.transform.localPosition = pos;
+        return go.transform;
     }
 
     static BodyPart Pivot(Transform parent, BodyPartType type, Vector3 pos, Vector3 euler)

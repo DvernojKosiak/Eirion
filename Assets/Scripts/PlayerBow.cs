@@ -172,11 +172,16 @@ public class PlayerBow : MonoBehaviour
             bp += new Vector3(0.08f, -0.22f, -0.12f);
             br *= Quaternion.Euler(35f, 0f, -25f);
         }
+        // ПКМ — удар луком: заводит вправо, плашмя, и хлёстко бьёт плечом лука справа налево
+        if (combat != null) PlayerCombat.BashPose(combat.BashP, new Vector3(0.18f, 0.08f, -0.12f), new Vector3(0f, 55f, -70f),
+                                                   new Vector3(-0.3f, 0.02f, 0.28f), new Vector3(0f, -65f, -85f), ref bp, ref br);
         WeaponSway.Apply(ref bp, ref br, 1f - 0.6f * s);   // натянул — держишь твёрже
         // натягиваешь — голова чуть клонится к луку, отпустил — взгляд дёргается за стрелой
         PlayerCamera.Sway(new Vector3(-1.5f * shotKick, 0f, 2.5f * s));
         bow.localPosition = bp;
         bow.localRotation = br;
+        // держу тварь луком за шею — лук лежит поперёк, за её шеей
+        if (combat != null && combat.PoleHold(bow, out Vector3 hp, out Quaternion hr)) { bow.position = hp; bow.rotation = hr; }
 
         Vector3 nock = new Vector3(0f, 0f, RestNockZ - draw * PullZ);
         stringTop.SetPosition(0, TipTop); stringTop.SetPosition(1, nock);

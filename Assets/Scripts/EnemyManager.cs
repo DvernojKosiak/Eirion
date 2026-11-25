@@ -622,6 +622,7 @@ public class EnemyManager : MonoBehaviour
             Enemy.State st = e.CurrentState;
             string label = st == Enemy.State.Stagger ? "ОТКРЫТ — тяжёлый удар!" : st == Enemy.State.Kneel ? "НА КОЛЕНЕ — руби по голове сверху!" :
                            st == Enemy.State.Pinned ? "ПРИГВОЖДЁН" : null;
+            if (!Hud.Popups) label = null;   // надписи над тварями убраны (вернуть — Hud.Popups = true)
             bool open = label != null;
             if (e.HealthFraction >= 0.999f && !open) continue;
             if (Vector3.Distance(world, cam.transform.position) > 30f) continue;

@@ -38,6 +38,7 @@ public class PlayerStaff : MonoBehaviour
     PlayerCombat combat;
     Camera cam;
     Transform staff, stone;
+    float aimStart;
     Renderer stoneRenderer;
     MaterialPropertyBlock block;
     Vector3 restPos;
@@ -152,7 +153,7 @@ public class PlayerStaff : MonoBehaviour
         Mouse mouse = Mouse.current;
         Keyboard kb = Keyboard.current;
         bool locked = Cursor.lockState == CursorLockMode.Locked;
-        bool can = mouse != null && kb != null && locked && cam != null && (combat == null || !combat.IsHolding);
+        bool can = mouse != null && kb != null && locked && cam != null && (combat == null || (!combat.IsHolding && combat.BashP < 0f));
 
         if (!can) { charging = false; aiming = false; }
         else
@@ -173,7 +174,7 @@ public class PlayerStaff : MonoBehaviour
                 }
 
                 // --- Молния ---
-                if (mouse.rightButton.wasPressedThisFrame && !charging) aiming = true;
+                if (mouse.rightButton.wasPressedThisFrame && !charging) { aiming = true; aimStart = Time.time; }
                 if (aiming)
                 {
                     bool has = AimGround(out Vector3 p);
@@ -183,7 +184,7 @@ public class PlayerStaff : MonoBehaviour
                     {
                         aiming = false;
                         aimMark.SetActive(false);
-                        if (has) CastLightning(p);
+                        if (has && Time.time - aimStart >= 0.2f) CastLightning(p);   // короткое нажатие — это удар посохом, не молния
                     }
                 }
             }
@@ -396,6 +397,9 @@ public class PlayerStaff : MonoBehaviour
             pos += new Vector3(0.08f, -0.22f, -0.12f);
             rot *= Quaternion.Euler(35f, 0f, -25f);
         }
+        // ПКМ коротко — удар посохом: занёс навершием назад над плечом и обрушил вперёд-вниз, двумя руками
+        if (combat != null) PlayerCombat.BashPose(combat.BashP, new Vector3(-0.05f, 0.3f, -0.2f), new Vector3(-45f, 0f, -10f),
+                                                   new Vector3(-0.15f, -0.05f, 0.35f), new Vector3(85f, 0f, 10f), ref pos, ref rot);
         WeaponSway.Apply(ref pos, ref rot);
 
         // глаза идут за посохом: завёл за плечо — взгляд чуть назад-вверх и вбок, метнул — качнулся вперёд
@@ -405,6 +409,8 @@ public class PlayerStaff : MonoBehaviour
         float k = 1f - Mathf.Exp(-14f * Time.deltaTime);
         staff.localPosition = Vector3.Lerp(staff.localPosition, pos, k);
         staff.localRotation = Quaternion.Slerp(staff.localRotation, rot, k);
+        // держу тварь посохом за шею — древко поперёк, за её шеей
+        if (combat != null && combat.PoleHold(staff, out Vector3 hp, out Quaternion hr)) { staff.position = hp; staff.rotation = hr; }
 
         // камень парит над когтями и медленно вращается, вокруг кружат искры
         float tm = Time.time;

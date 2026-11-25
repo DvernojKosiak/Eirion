@@ -10,7 +10,7 @@ public class PlayerBlaster : MonoBehaviour
     public static PlayerBlaster Local { get; private set; }
 
     public float capacity = 24f;        // выстрелов в аккумуляторе
-    public float fireRate = 2.8f;        // выстрелов в секунду — между выстрелами катушки успевают набрать заряд
+    public float fireRate = 1.7f;        // выстрелов в секунду (было 2.8) — между выстрелами катушки успевают набрать заряд
     public float boltSpeed = 85f;
     public float rechargeTime = 1.8f;    // полная перезарядка
     public float zoom = 18f;
@@ -113,7 +113,7 @@ public class PlayerBlaster : MonoBehaviour
         Mouse mouse = Mouse.current;
         Keyboard kb = Keyboard.current;
         bool locked = Cursor.lockState == CursorLockMode.Locked;
-        bool can = mouse != null && kb != null && locked && cam != null && (combat == null || !combat.IsHolding);
+        bool can = mouse != null && kb != null && locked && cam != null && (combat == null || (!combat.IsHolding && combat.BashP < 0f));
 
         bool aiming = can && mouse.rightButton.isPressed;
         aim = Mathf.MoveTowards(aim, aiming ? 1f : 0f, Time.deltaTime * 7f);
@@ -203,6 +203,9 @@ public class PlayerBlaster : MonoBehaviour
             pos += new Vector3(0.08f, -0.22f, -0.12f);
             rot *= Quaternion.Euler(35f, 0f, -25f);
         }
+        // ПКМ коротко — удар рукоятью: вскинул бластер стволом вверх и рубанул вниз-вперёд
+        if (combat != null) PlayerCombat.BashPose(combat.BashP, new Vector3(0.05f, 0.22f, -0.1f), new Vector3(-55f, 0f, 30f),
+                                                   new Vector3(-0.12f, -0.08f, 0.3f), new Vector3(65f, 0f, -20f), ref pos, ref rot);
         WeaponSway.Apply(ref pos, ref rot, 1f - 0.7f * aim);   // в прицеле держишь твёрже
         float k = 1f - Mathf.Exp(-20f * Time.deltaTime);
         gun.localPosition = Vector3.Lerp(gun.localPosition, pos, k);

@@ -27,8 +27,13 @@ public class PlayerBody : MonoBehaviour
 
     // Управляют бой и захват (только у своего игрока)
     public float KickP = -1f;            // пинок: 0..1 — сколько прошло, меньше 0 — не пинаю
-    public Vector3? HoldTarget;          // держу тварь — обе руки тянутся к ней
+    public Vector3? HoldTarget;          // держу тварь — левая кисть сюда
+    public Vector3? HoldTargetR;         // правая кисть сюда (держу тварь древком лука или посоха двумя руками)
+    Vector3 toolBase, toolTurn;
+    Transform lastTool;          // корпус идёт за оружием: резкое движение оружия разворачивает плечи
     public float Twist;                  // разворот корпуса (бросок)
+    public const float ArmReach = 0.62f;  // плечо + предплечье
+    public Vector3 RightShoulder => armR != null ? armR.position : transform.position + Vector3.up * 0.5f;
     float air;
 
     void Start()
@@ -192,7 +197,20 @@ public class PlayerBody : MonoBehaviour
             else { float w = (p - 0.7f) / 0.3f; kickT = Mathf.Lerp(-105f, 0f, w); kickBend = Mathf.Lerp(0f, 20f, Mathf.Sin(w * Mathf.PI)); kick = 1f - w; }
         }
 
-        Quaternion torsoRot = Quaternion.Euler(lean.x * 0.7f - 25f * slide - 15f * kick, -hipYaw * 0.8f + s * 5f * amp + Twist, lean.y * 0.7f);
+        // замах и удар — всем корпусом: оружие ушло вправо-назад — плечи развернулись туда же, ударил — провернулись следом
+        Transform toolNow = hotbar != null ? hotbar.CurrentModel : null;
+        if (toolNow != null && toolNow.gameObject.activeInHierarchy && !dead)
+        {
+            Vector3 tl = transform.InverseTransformPoint(toolNow.position);
+            if (toolNow != lastTool) { toolBase = tl; lastTool = toolNow; }   // сменил оружие — не дёргаться
+            toolBase = Vector3.Lerp(toolBase, tl, 1f - Mathf.Exp(-1.5f * dt));   // медленная «средняя» поза
+            Vector3 off = tl - toolBase;
+            Vector3 wantTurn = new Vector3(Mathf.Clamp(-off.y * 45f + off.z * 35f, -25f, 30f), Mathf.Clamp(off.x * 85f, -45f, 45f), Mathf.Clamp(-off.x * 15f, -10f, 10f));
+            toolTurn = Vector3.Lerp(toolTurn, wantTurn, 1f - Mathf.Exp(-14f * dt));
+        }
+        else toolTurn = Vector3.Lerp(toolTurn, Vector3.zero, 1f - Mathf.Exp(-8f * dt));
+
+        Quaternion torsoRot = Quaternion.Euler(lean.x * 0.7f - 25f * slide - 15f * kick + toolTurn.x, -hipYaw * 0.8f + s * 5f * amp + Twist + toolTurn.y, lean.y * 0.7f + toolTurn.z);
         hipRot *= Quaternion.Euler(0f, Twist * 0.4f, 0f);
 
         // ноги
@@ -221,6 +239,7 @@ public class PlayerBody : MonoBehaviour
         Quaternion eL = Quaternion.Euler(-20f - 15f * amp, 0f, 0f), eR = eL;
 
         if (kick > 0f) { aL *= Quaternion.Euler(0f, 0f, -40f * kick); aR *= Quaternion.Euler(0f, 0f, 40f * kick); } // руки в стороны — держит равновесие
+        if (dead) { aL = Quaternion.Euler(-15f, 0f, -70f); aR = Quaternion.Euler(-25f, 0f, 65f); eL = Quaternion.Euler(-10f, 0f, 0f); eR = Quaternion.Euler(-30f, 0f, 0f); } // упал — руки раскинуты по земле
 
         // с оружием в руке (видно от третьего лица и у чужих): правая рука тянется к оружию
         Transform tool = hotbar != null ? hotbar.CurrentModel : null;
@@ -242,12 +261,13 @@ public class PlayerBody : MonoBehaviour
         if (tool != null && tool.gameObject.activeInHierarchy && !dead)
         {
             Vector3 to = torso.InverseTransformPoint(tool.position) - armR.localPosition;
-            if (to.sqrMagnitude > 0.01f) { aR = Quaternion.FromToRotation(Vector3.down, to.normalized); eR = Quaternion.Euler(-10f, 0f, 0f); }
+            if (local && HoldTargetR.HasValue) to = torso.InverseTransformPoint(HoldTargetR.Value) - armR.localPosition; // правая — на конце древка
+            if (to.sqrMagnitude > 0.01f) Reach(to, out aR, out eR);   // кисть ровно на рукояти, локоть сгибается
             bool twoHands = hotbar.Current == Tool.Bow || hotbar.Current == Tool.Staff || hotbar.Current == Tool.Blaster;
             if (twoHands && !(local && HoldTarget.HasValue))   // левая занята тварью — оружие в одной правой
             {
                 Vector3 toL = torso.InverseTransformPoint(tool.position) - armL.localPosition;
-                if (toL.sqrMagnitude > 0.01f) { aL = Quaternion.FromToRotation(Vector3.down, toL.normalized); eL = Quaternion.Euler(-25f, 0f, 0f); }
+                if (toL.sqrMagnitude > 0.01f) Reach(toL, out aL, out eL);
             }
         }
 
@@ -264,5 +284,17 @@ public class PlayerBody : MonoBehaviour
         armR.localRotation = Quaternion.Slerp(armR.localRotation, aR, k);
         foreL.localRotation = Quaternion.Slerp(foreL.localRotation, eL, k);
         foreR.localRotation = Quaternion.Slerp(foreR.localRotation, eR, k);
+    }
+
+    // Рука тянется кистью в точку (от плеча, в осях туловища): локоть сгибается сам, по длине руки
+    static void Reach(Vector3 to, out Quaternion shoulder, out Quaternion elbowRot)
+    {
+        const float upLen = 0.32f, loLen = 0.3f;
+        float len = to.magnitude;
+        float d = Mathf.Clamp(len, 0.08f, upLen + loLen - 0.001f);
+        float elbow = Mathf.Acos(Mathf.Clamp((upLen * upLen + loLen * loLen - d * d) / (2f * upLen * loLen), -1f, 1f)) * Mathf.Rad2Deg;
+        float lift = Mathf.Acos(Mathf.Clamp((upLen * upLen + d * d - loLen * loLen) / (2f * upLen * d), -1f, 1f)) * Mathf.Rad2Deg;
+        shoulder = Quaternion.FromToRotation(Vector3.down, to / len) * Quaternion.Euler(lift, 0f, 0f);
+        elbowRot = Quaternion.Euler(-(180f - elbow), 0f, 0f);
     }
 }

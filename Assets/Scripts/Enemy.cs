@@ -196,6 +196,17 @@ public class Enemy : MonoBehaviour
 
     public void Knock(Vector3 force) { knock += force * knockScale; }
 
+    // Где хватать рукой: загривок — верх туловища между плечами (настоящая точка на теле, а не «где-то перед тварью»)
+    public Vector3 GripPoint
+    {
+        get
+        {
+            BodyPart t = parts != null ? parts[(int)BodyPartType.Torso] : null;
+            if (t != null && !t.lost) return t.transform.TransformPoint(new Vector3(0f, 0.66f, 0.05f));
+            return transform.position + Vector3.up * 1.25f * bodyScale;
+        }
+    }
+
     public void Setup(int enemyId, bool simulated, Transform visualRoot, BodyPart[] bodyParts)
     {
         id = enemyId;
@@ -489,9 +500,10 @@ public class Enemy : MonoBehaviour
     {
         if (cc == null || !cc.enabled) return;
         Vector3 sep = Vector3.zero;
-        foreach (Enemy o in All)
+        bool lyingMe = CurrentState == State.Down || CurrentState == State.Kneel;
+        if (!lyingMe) foreach (Enemy o in All)   // лежащая не расталкивается — иначе тела в куче ёрзают
         {
-            if (o == this || o.CurrentState == State.Thrown) continue;
+            if (o == this || o.CurrentState == State.Thrown || o.CurrentState == State.Down) continue;
             Vector3 d = transform.position - o.transform.position; d.y = 0f;
             float m = d.magnitude, min = 1.1f * (bodyScale + o.bodyScale) * 0.5f + 0.3f;
             if (m > 0.01f && m < min) sep += d / m * (min - m);
@@ -674,10 +686,11 @@ public class Enemy : MonoBehaviour
             {
                 // Боковой удар разворачивает тело в сторону клинка
                 float side = Vector3.Dot(dir, transform.right);
-                twist += -side * (brute ? 50f : 140f) * (h.heavy ? 1.4f : 1f);
-                Knock(dir * (h.heavy ? 8f : 5f));
-                if (h.type == HitType.Cross && !brute) { BeginThrow(dir * 9f + Vector3.up * 3f, 6f); callout = Callout.Cross; break; }
-                if (h.heavy && !brute) { BeginThrow(dir * 8f + Vector3.up * 3f, 4f); break; }
+                // тело тяжёлое: удар разворачивает и сдвигает его, но не сдувает, как пушинку
+                twist += -side * (brute ? 40f : 90f) * (h.heavy ? 1.4f : 1f);
+                Knock(dir * (h.heavy ? 3.5f : 2.2f));
+                if (h.type == HitType.Cross && !brute) { BeginThrow(dir * 5f + Vector3.up * 2f, 3f); callout = Callout.Cross; break; }
+                if (h.heavy && !brute) { BeginThrow(dir * 4.5f + Vector3.up * 1.8f, 2.5f); break; } // сбило с ног, падает рядом
                 if (h.heavy && brute) { Interrupt(State.Stagger, 0.8f); break; }
                 if (!brute) Interrupt(State.Flinch, 0.3f);       // больно: сбивает замах, на миг замирает
                 LimbEffect(part, h, brute, ref callout);
@@ -707,7 +720,7 @@ public class Enemy : MonoBehaviour
                     Knock(dir * 4f);
                     Interrupt(State.Stagger, CurrentState == State.Kneel ? 1.0f : 0.5f);
                 }
-                else BeginThrow(dir * 9f + Vector3.up * 3.5f, 2f);
+                else BeginThrow(dir * 7f + Vector3.up * 2.8f, 2f);
                 break;
             case HitType.Fire:
                 // огненный шар: взрывом отбрасывает, тело горит ещё пару секунд
@@ -823,7 +836,7 @@ public class Enemy : MonoBehaviour
         bp.owner = null;
         bp.transform.SetParent(null, true);
         Rigidbody body = MakePhysical(bp.gameObject, 6f * bodyScale);
-        body.linearVelocity = dir.normalized * 4f + Vector3.up * 3.5f;
+        body.linearVelocity = dir.normalized * 2.5f + Vector3.up * 2f;
         body.angularVelocity = Random.insideUnitSphere * 10f;
         Destroy(bp.gameObject, 7f);
         CombatFx.Ichor(bp.transform.position, dir, p == BodyPartType.Sack ? 4 : 16);
@@ -1121,7 +1134,9 @@ public class Enemy : MonoBehaviour
             other.Health -= impact * 3f;
             other.lastAttacker = lastAttacker;
             Vector3 push = other.transform.position - transform.position; push.y = 0f;
-            if (other.CurrentState != State.Thrown && other.CurrentState != State.Grabbed && !other.climbing && !other.OnBlade)
+            // упала на лежащую или летит медленно — не сбивает её снова (иначе куча дёргается и подпрыгивает)
+            bool lying = other.CurrentState == State.Down || other.CurrentState == State.Kneel;
+            if (!lying && impact > 6f && other.CurrentState != State.Thrown && other.CurrentState != State.Grabbed && !other.climbing && !other.OnBlade)
             {
                 if (other.kind == EnemyKind.Brute) other.Interrupt(State.Flinch, 0.3f);
                 else other.BeginThrow(push.normalized * impact * 0.5f + Vector3.up * 2f, 2f); // сбили соседа как кеглю
@@ -1211,6 +1226,7 @@ public class Enemy : MonoBehaviour
     float TS => Time.time < slowUntil ? slowScale : 1f;
     public void SlowMo(float duration, float scale)
     {
+        if (!CombatFx.SlowMotion) return;   // замедление выключено (CombatFx.cs)
         slowUntil = Time.time + duration;
         slowScale = scale;
         float extra = duration * (1f - scale);   // её таймеры тоже идут медленнее
@@ -1391,9 +1407,32 @@ public class Enemy : MonoBehaviour
     }
 
     // Шаги, замах когтями, судороги — и «пружина» отдачи от ударов на каждом суставе
+    // Тело для столкновений — по позе: лежит — низкое, на колене — пониже. Раньше лежащая тварь
+    // оставалась «столбом» в 1.9 м, и упавшие на неё висели в воздухе и соскальзывали
+    CapsuleCollider copyCol;
+    void FitCollider(int legsLost)
+    {
+        State st = CurrentState;
+        float s = bodyScale;
+        float h = BodyHeight * s, r = 0.45f * s;
+        if (st == State.Down) { h = 0.7f * s; r = 0.33f * s; }
+        else if (st == State.Kneel) h = 1.35f * s;
+        else if (legsLost >= 1 && st != State.Grabbed && !climbing) { h = 0.9f * s; r = 0.4f * s; }
+        if (cc != null && cc.enabled)
+        {
+            if (Mathf.Abs(cc.height - h) > 0.01f) { cc.radius = r; cc.height = h; cc.center = new Vector3(0f, h / 2f, 0f); }
+        }
+        else if (cc == null)
+        {
+            if (copyCol == null) copyCol = GetComponent<CapsuleCollider>();
+            if (copyCol != null && copyCol != throwCol && Mathf.Abs(copyCol.height - h) > 0.01f) { copyCol.radius = r; copyCol.height = h; copyCol.center = new Vector3(0f, h / 2f, 0f); }
+        }
+    }
+
     void AnimateParts(float t, float dt, int legsLost)
     {
         if (parts == null) return;
+        FitCollider(legsLost);
         float amp = Mathf.Clamp01(visSpeed / 3f);
         float s = Mathf.Sin(walkPhase);
         for (int i = 0; i < parts.Length; i++)
@@ -1446,8 +1485,9 @@ public class Enemy : MonoBehaviour
                     if (leg) e.x = Mathf.Sin(t * 15f + i * 2f) * 30f;
                     break;
                 case State.Kneel:
-                    if (bp.type == BodyPartType.LegL) e.x = -85f;
-                    if (bp.type == BodyPartType.LegR) e.x = 75f;
+                    // на одном колене: левое бедро вперёд, голень вниз; правое колено на земле, голень назад
+                    if (bp.type == BodyPartType.LegL) e.x = -80f;
+                    if (bp.type == BodyPartType.LegR) e.x = 5f;
                     if (arm) e.x = 25f;
                     break;
                 case State.Stagger:
@@ -1456,14 +1496,17 @@ public class Enemy : MonoBehaviour
                     break;
                 case State.Down:
                     // лежит не бревном: руки шарят и упираются в землю, ноги сучат, голова поднимается
-                    if (arm) e = new Vector3(-60f + Mathf.Sin(t * 2.3f + i) * 25f, 0f, Mathf.Sin(t * 1.9f + i * 1.7f) * 20f * side);
+                    // на спине — руки раскинуты в стороны по земле; ничком — вытянуты вперёд, упираются
+                    if (arm) e = downProne
+                        ? new Vector3(-100f + Mathf.Sin(t * 2.3f + i) * 20f, 0f, -20f * side)
+                        : new Vector3(30f + Mathf.Sin(t * 2.3f + i) * 20f, 0f, -(60f + Mathf.Sin(t * 1.9f + i * 1.7f) * 20f) * side);
                     if (leg) e.x = Mathf.Sin(t * 2.1f + i * 2f) * 25f + 10f;
                     if (bp.type == BodyPartType.Head) e.x = (downProne ? -25f : 30f) + Mathf.Sin(t * 1.3f) * 10f;
                     if (bp.type == BodyPartType.Torso) e.x = Mathf.Sin(t * 1.6f) * 8f;
                     break;
                 case State.Thrown:
                     // в полёте руки и ноги болтаются и машут, а не застывают
-                    if (arm) e = new Vector3(-70f + Mathf.Sin(t * 13f + i) * 55f, 0f, (40f + Mathf.Sin(t * 11f + i) * 30f) * side);
+                    if (arm) e = new Vector3(-20f + Mathf.Sin(t * 13f + i) * 50f, 0f, -(50f + Mathf.Sin(t * 11f + i) * 35f) * side); // раскинуты в стороны
                     if (leg) e.x = Mathf.Sin(t * 12f + i * 2f) * 45f;
                     if (bp.type == BodyPartType.Head) e.x = Mathf.Sin(t * 9f) * 20f;
                     break;
@@ -1486,6 +1529,9 @@ public class Enemy : MonoBehaviour
                     break;
             }
 
+            // Колено и локоть: ноги сгибаются при шаге и когда садится/лежит, лапы согнуты, в ударе распрямляются
+            if (bp.bend != null) bp.bend.localRotation = Quaternion.Slerp(bp.bend.localRotation, Quaternion.Euler(BendAngle(bp.type, arm, side, i, t, legsLost), 0f, 0f), Mathf.Min(1f, 18f * dt));
+
             // Пружина отдачи: удар отклоняет сустав, потом он возвращается с покачиванием
             bp.reactVel += (-260f * bp.react - 28f * bp.reactVel) * dt; // жёсткая пружина без раскачки
             bp.react += bp.reactVel * dt;
@@ -1499,7 +1545,133 @@ public class Enemy : MonoBehaviour
             }
             Quaternion target = r * bp.baseRotation * Quaternion.Euler(e);
             bp.transform.localRotation = Quaternion.Slerp(bp.transform.localRotation, target, Mathf.Min(1f, 25f * dt));
+
+            // руки и ноги при падении — как у настоящего тела: висят, отстают и болтаются
+            float want = LimpWant(bp.type);
+            bp.limp = Mathf.MoveTowards(bp.limp, want, dt * (want > bp.limp ? 6f : 2f));
+            if (bp.limp > 0.01f && (arm || leg)) Floppy(bp, bp.transform.parent.rotation * target, dt);
+            else bp.tipInit = false;
         }
+    }
+
+    // Угол в колене (+ — голень назад) или в локте (− — предплечье вперёд)
+    float BendAngle(BodyPartType type, bool arm, float side, int i, float t, int legsLost)
+    {
+        float amp = Mathf.Clamp01(visSpeed / 3f);
+        if (!arm)
+        {
+            switch (CurrentState)
+            {
+                case State.Kneel: return type == BodyPartType.LegL ? 85f : 95f;
+                case State.Down: return 30f + Mathf.Sin(t * 2.1f + i * 2f) * 20f;
+                case State.Thrown: return 35f + Mathf.Sin(t * 10f + i) * 30f;
+                case State.Grabbed: case State.Impaled: case State.Pinned: return 25f + Mathf.Sin(t * 15f + i * 2f) * 25f;
+                case State.WindUp: return 25f;          // приседает перед ударом
+                case State.Stagger: return 20f;
+            }
+            if (legsLost >= 1) return 10f;
+            // шаг: нога сгибается, когда переносится вперёд
+            return 6f + Mathf.Max(0f, Mathf.Sin(walkPhase - 1.2f) * side) * 60f * amp;
+        }
+        if (Wounded(type)) return -5f;
+        switch (CurrentState)
+        {
+            case State.WindUp: return -70f;                              // лапа взведена
+            case State.Recover: return Mathf.Lerp(-70f, -5f, Mathf.Clamp01((1f - lunge) * 3f)); // удар — распрямилась
+            case State.Down: return -35f + Mathf.Sin(t * 2.3f + i) * 20f;
+            case State.Thrown: return -30f + Mathf.Sin(t * 12f + i) * 35f;
+            case State.Grabbed: case State.Impaled: case State.Pinned: return -45f + Mathf.Sin(t * 18f + i) * 30f;
+            case State.Stagger: return -15f;
+            case State.Kneel: return -40f;
+        }
+        if (legsLost >= 1) return -30f + Mathf.Sin(walkPhase * 1.5f + (side > 0f ? 0f : Mathf.PI)) * 30f;
+        return -25f;
+    }
+
+    // Насколько конечность сейчас «обмякла»: 0 — её ведёт анимация, 1 — её ведут сила тяжести и инерция
+    float LimpWant(BodyPartType t)
+    {
+        bool arm = BodyPart.IsArm(t), leg = BodyPart.IsLeg(t);
+        if (!arm && !leg) return 0f;
+        switch (CurrentState)
+        {
+            case State.Thrown: return arm ? 0.9f : 0.7f;                // летит — всё болтается
+            case State.Down: return arm ? 0.75f : 0.25f;                // лежит — руки падают на землю
+            case State.Stagger: return arm ? 0.45f : 0f;                // шатается — руки мотаются
+            case State.Grabbed: case State.Impaled: case State.Pinned: return arm ? 0.4f : 0.5f;
+        }
+        if (arm && Wounded(t)) return 0.6f;                              // раненая рука висит плетью по-настоящему
+        return 0f;
+    }
+
+    // Конечность — маятник: сустав на месте, конец тянет вниз сила тяжести, «мышцы» слабо тянут к позе
+    // анимации. Тело дёрнулось или остановилось — рука по инерции продолжает лететь. Сквозь пол не уходит.
+    float floorY; int floorFrame = -1;
+    static readonly RaycastHit[] floorHits = new RaycastHit[8];
+    void Floppy(BodyPart bp, Quaternion animWorld, float dt)
+    {
+        Transform tr = bp.transform;
+        Vector3 joint = tr.position;
+        float len = (BodyPart.IsArm(bp.type) ? 0.75f : 0.9f) * tr.lossyScale.y;
+        Vector3 animDir = animWorld * Vector3.down;     // конечности из кубиков растут вниз от сустава
+        if (!bp.tipInit || dt <= 0f)
+        {
+            if (!bp.tipInit) { bp.tip = joint + tr.rotation * Vector3.down * len; bp.tipVel = Vector3.zero; bp.tipInit = true; }
+            if (dt <= 0f) return;
+        }
+
+        // пол под тварью (один луч на тварь за кадр)
+        if (floorFrame != Time.frameCount)
+        {
+            floorFrame = Time.frameCount;
+            floorY = float.NegativeInfinity;
+            Vector3 from = joint + Vector3.up * 0.5f;
+            int n = Physics.RaycastNonAlloc(from, Vector3.down, floorHits, 4f, ~(1 << 2), QueryTriggerInteraction.Ignore);
+            float best = float.MaxValue;
+            for (int k = 0; k < n; k++)
+            {
+                RaycastHit h = floorHits[k];
+                if (h.collider is CharacterController || h.collider.GetComponentInParent<Enemy>() != null || h.collider.attachedRigidbody != null && !h.collider.attachedRigidbody.isKinematic) continue;
+                if (h.distance < best) { best = h.distance; floorY = h.point.y; }
+            }
+        }
+
+        Vector3 prev = bp.tip;
+        float tone = Mathf.Lerp(80f, 0f, bp.limp);      // чем обмякшее, тем слабее тянет к позе
+        Vector3 animTip = joint + animDir * len;
+        bp.tipVel += (Physics.gravity + (animTip - bp.tip) * tone) * dt;
+        bp.tipVel *= Mathf.Exp(-1.5f * dt);             // сопротивление воздуха
+        Vector3 p = prev + bp.tipVel * dt;
+
+        // длина конечности постоянная
+        Vector3 d = p - joint;
+        Vector3 dir = d.sqrMagnitude > 1e-6f ? d.normalized : animDir;
+        // сустав гнётся не во все стороны: не дальше конуса от позы анимации (рука не уходит сквозь тело)
+        float maxAng = BodyPart.IsArm(bp.type) ? 110f : 65f;
+        float ang = Vector3.Angle(animDir, dir);
+        if (ang > maxAng) dir = Vector3.Slerp(animDir, dir, maxAng / ang).normalized;
+        p = joint + dir * len;
+
+        // пол: конец руки ложится на землю и скользит с трением
+        float thick = 0.08f * tr.lossyScale.y;
+        bool onFloor = false;
+        if (!float.IsNegativeInfinity(floorY) && joint.y > floorY && p.y < floorY + thick)
+        {
+            p.y = floorY + thick;
+            Vector3 dd = p - joint;
+            if (dd.sqrMagnitude > len * len) p = joint + dd.normalized * len;
+            dir = (p - joint).sqrMagnitude > 1e-6f ? (p - joint).normalized : dir;
+            onFloor = true;
+        }
+
+        bp.tipVel = (p - prev) / dt;
+        if (onFloor) { bp.tipVel.y = Mathf.Max(0f, bp.tipVel.y); bp.tipVel.x *= Mathf.Exp(-10f * dt); bp.tipVel.z *= Mathf.Exp(-10f * dt); }
+        bp.tipVel = Vector3.ClampMagnitude(bp.tipVel, 25f);
+        bp.tip = p;
+
+        // поворачиваем конечность туда, куда висит её конец (кручение вдоль руки — от анимации)
+        Quaternion floppy = Quaternion.FromToRotation(animDir, dir) * animWorld;
+        tr.rotation = Quaternion.Slerp(tr.rotation, floppy, Mathf.Clamp01(bp.limp * 4f));
     }
 
     // Смерть: тело падает тряпичной куклой (суставы на шарнирах), через несколько секунд исчезает
@@ -1509,11 +1681,27 @@ public class Enemy : MonoBehaviour
         dead = true;
         // смертельный удар отбрасывает тело — эффектно, по направлению удара
         Vector3 hd = lastHitDir; hd.y = Mathf.Max(hd.y, 0f);
-        Vector3 v = (rb != null ? rb.linearVelocity : Vector3.zero) + hd * 4.5f + Vector3.up * 2.2f;
+        Vector3 v = (rb != null ? rb.linearVelocity : Vector3.zero) + hd * 2.2f + Vector3.up * 1f;   // тело тяжёлое — оседает, а не улетает
         CombatFx.Play(CombatFx.Snd.Fall, transform.position, 0.9f, 0.8f);
         GameObject corpse = new GameObject("Corpse");
         Rigidbody torsoRb = null;
         var limbs = new List<BodyPart>();
+        // «спокойная» поза каждой части относительно туловища (руки опущены вдоль тела, ноги прямо) —
+        // от неё считаются пределы суставов. Раньше считались от позы в момент смерти: если руки
+        // были вытянуты вперёд, они так и оставались торчать
+        var relaxed = new Dictionary<BodyPart, Quaternion>();
+        BodyPart torsoPart = parts != null ? parts[(int)BodyPartType.Torso] : null;
+        if (parts != null && torsoPart != null && !torsoPart.lost)
+        {
+            Quaternion tw = torsoPart.transform.rotation, tb = torsoPart.baseRotation;
+            foreach (BodyPart bp in parts)
+            {
+                if (bp == null || bp.lost || bp == torsoPart) continue;
+                if (BodyPart.IsArm(bp.type)) relaxed[bp] = tw * bp.baseRotation * Quaternion.Euler(30f, 0f, 0f);  // руки вниз
+                else if (BodyPart.IsLeg(bp.type)) relaxed[bp] = tw * Quaternion.Inverse(tb) * bp.baseRotation;     // ноги прямо под тазом
+                else relaxed[bp] = tw * bp.baseRotation;
+            }
+        }
         if (parts != null)
         {
             foreach (BodyPart bp in parts)
@@ -1533,17 +1721,26 @@ public class Enemy : MonoBehaviour
             foreach (BodyPart bp in limbs)
             {
                 if (torsoRb == null) break;
+                Rigidbody lr = bp.GetComponent<Rigidbody>();
+                // сустав «запоминает» спокойную позу: на миг ставим часть в неё, цепляем шарнир, возвращаем как было
+                Quaternion keep = bp.transform.rotation;
+                bool haveRelaxed = relaxed.TryGetValue(bp, out Quaternion rel);
+                if (haveRelaxed) { bp.transform.rotation = rel; if (lr != null) lr.rotation = rel; Physics.SyncTransforms(); }
                 CharacterJoint j = bp.gameObject.AddComponent<CharacterJoint>();
                 j.connectedBody = torsoRb;
                 j.anchor = Vector3.zero;
-                j.axis = Vector3.right;
-                j.swingAxis = Vector3.forward;
-                // суставы мягче и свободнее — тело оседает и складывается, а не стоит колом
-                j.lowTwistLimit = new SoftJointLimit { limit = -50f };
-                j.highTwistLimit = new SoftJointLimit { limit = 50f };
-                j.swing1Limit = new SoftJointLimit { limit = 80f };
-                j.swing2Limit = new SoftJointLimit { limit = 55f };
+                j.axis = Vector3.right;          // вперёд-назад (как плечо или бедро)
+                j.swingAxis = Vector3.forward;   // в стороны
+                bool armJ = BodyPart.IsArm(bp.type), legJ = BodyPart.IsLeg(bp.type);
+                // руки свободные (машут, раскидываются), ноги чуть строже, голова мотается
+                float swingFB = armJ ? 110f : legJ ? 70f : 40f;
+                j.lowTwistLimit = new SoftJointLimit { limit = -swingFB };
+                j.highTwistLimit = new SoftJointLimit { limit = swingFB };
+                j.swing1Limit = new SoftJointLimit { limit = armJ ? 95f : legJ ? 40f : 35f };
+                j.swing2Limit = new SoftJointLimit { limit = armJ ? 30f : 15f };
                 j.enableProjection = true;
+                if (haveRelaxed) { bp.transform.rotation = keep; if (lr != null) lr.rotation = keep; Physics.SyncTransforms(); }
+                if (lr != null) { lr.angularDamping = 2f; lr.maxAngularVelocity = 20f; }
             }
         }
         if (torsoRb == null)

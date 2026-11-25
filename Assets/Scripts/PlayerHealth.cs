@@ -304,7 +304,7 @@ public class PlayerHealth : MonoBehaviour
             string from = SideName(ss);
             Color old = GUI.color; GUI.color = c;
             if (IsBlocking && GuardSide == ss) { GUI.color = new Color(0.6f, 0.9f, 1f); from += " — меч там"; }
-            GUI.Label(new Rect(cx + dir.x * 120f - 60f, cy + dir.y * 120f - 10f, 120f, 20f), from, Hud.CenterTiny);
+            if (Hud.Popups) GUI.Label(new Rect(cx + dir.x * 120f - 60f, cy + dir.y * 120f - 10f, 120f, 20f), from, Hud.CenterTiny);
             GUI.color = old;
         }
     }

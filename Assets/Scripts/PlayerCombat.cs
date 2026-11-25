@@ -23,6 +23,7 @@ public class PlayerCombat : MonoBehaviour
     public float heavyTime = 0.55f;
     public float chargeTime = 0.6f;        // сколько держать ЛКМ для полного замаха (тяжёлый удар)
     public float embedTime = 0.45f;        // сколько клинок сидит в теле после тяжёлого удара
+    public bool impale = false;            // true — сильный удар насаживает тварь на клинок (старое поведение)
 
     [Header("Остальное")]
     public float range = 2.8f;
@@ -36,12 +37,14 @@ public class PlayerCombat : MonoBehaviour
     public float kickStamina = 12f;
     public float grabStamina = 15f;
     public float toolStamina = 6f;
+    public float bashStamina = 8f;         // удар луком / посохом / бластером в ближнем бою (ПКМ)
 
-    enum Attack { None, Kick, Tool, Throw, Recoil, Rip }
+    enum Attack { None, Kick, Tool, Throw, Recoil, Rip, Bash }
     const int BladeSamples = 10;
 
     Camera cam;
     Transform pivot;
+    PlayerCamera pcam;
     PlayerHotbar hotbar;
     PlayerHealth health;
     CharacterController controller;
@@ -122,6 +125,34 @@ public class PlayerCombat : MonoBehaviour
     public void PlaySwing() { toolSwing = 1f; }
 
     // У этих оружий своё управление (PlayerBow, PlayerStaff, PlayerBlaster)
+    // Удар в ближнем бою луком, посохом или бластером: 0..1 — сколько прошло, меньше 0 — не бью
+    public float BashP => attack == Attack.Bash ? Mathf.Clamp01((Time.time - attackStart) / attackDuration) : -1f;
+    float rmbAt = -10f;
+
+    // Поза оружия при ударе: замах (0–35%), удар (35–60%), возврат. Каждое оружие даёт свои позы
+    public static void BashPose(float u, Vector3 wPos, Vector3 wRot, Vector3 sPos, Vector3 sRot, ref Vector3 pos, ref Quaternion rot)
+    {
+        if (u < 0f) return;
+        Vector3 op, orr;
+        if (u < 0.35f) { float w = Smooth(u / 0.35f); op = wPos * w; orr = wRot * w; }
+        else if (u < 0.6f) { float q = (u - 0.35f) / 0.25f; q = q * q * (2.2f - 1.2f * q); op = Vector3.Lerp(wPos, sPos, q); orr = Vector3.Lerp(wRot, sRot, q); }
+        else { float w = Smooth((u - 0.6f) / 0.4f); op = sPos * (1f - w); orr = sRot * (1f - w); }
+        pos += op;
+        rot *= Quaternion.Euler(orr);
+    }
+
+    // Лук или посох в руках, а тварь держу: перехватываю её древком за шею, двумя руками
+    bool poleHold;
+    Vector3 polePos; Quaternion poleRot;
+    public bool PoleHold(Transform model, out Vector3 pos, out Quaternion rot)
+    {
+        pos = polePos; rot = poleRot;
+        if (!poleHold || model == null) return false;
+        // посох держу за середину (его начало — у нижней рукояти), лук — за рукоять
+        if (hotbar != null && hotbar.Current == Tool.Staff) pos -= poleRot * Vector3.up * 0.42f;
+        return true;
+    }
+
     public static bool OwnWeapon(Tool t) => t == Tool.Bow || t == Tool.Staff || t == Tool.Blaster;
 
     void Start()
@@ -134,6 +165,7 @@ public class PlayerCombat : MonoBehaviour
         EnemyManager.GrabResult += OnGrabResult;
 
         PlayerCamera pc = GetComponentInChildren<PlayerCamera>();
+        pcam = pc;
         pivot = pc != null ? pc.transform : (cam != null ? cam.transform : transform);
 
         // Длина клинка — по модели меча (верх самой высокой детали)
@@ -263,6 +295,16 @@ public class PlayerCombat : MonoBehaviour
                 }
                 else if (!OwnWeapon(tool) && tool != Tool.Sword && mouse.leftButton.wasPressedThisFrame && attack == Attack.None)
                     StartAttack(Attack.Tool);
+
+                // ПКМ — ударить луком, посохом или бластером. У лука ПКМ свободна — бьёт сразу.
+                // У посоха (молния) и бластера (прицел) — короткое нажатие: бьёт, держишь — как раньше
+                if (OwnWeapon(tool))
+                {
+                    if (mouse.rightButton.wasPressedThisFrame) rmbAt = Time.time;
+                    bool tap = tool == Tool.Bow ? mouse.rightButton.wasPressedThisFrame
+                                                : mouse.rightButton.wasReleasedThisFrame && Time.time - rmbAt < 0.2f;
+                    if (tap && !busy) StartAttack(Attack.Bash);
+                }
             }
         }
 
@@ -361,7 +403,7 @@ public class PlayerCombat : MonoBehaviour
     {
         if (!swinging) return;
         if (queued && swP >= swF && !IsStuck) { BeginSwing(0f); return; } // следующий удар — прямо из прохода по инерции
-        float rate = Time.time < dragUntil ? 0.25f : 1f; // в теле клинок идёт медленнее — чувствуется вес
+        float rate = Time.time < dragUntil ? 0.22f : 1f; // в теле клинок идёт медленнее — чувствуется вес
         if (cutting)
         {
             // режет вглубь: каждую долю секунды всё труднее, пока не встанет совсем
@@ -444,7 +486,7 @@ public class PlayerCombat : MonoBehaviour
         HitType type = swingS.y < -0.6f ? HitType.Chop : HitType.Slash;
         bool brute = e.kind == EnemyKind.Brute;
         bool bounce = brute && swingPower < 0.6f && (bp.type == BodyPartType.Torso || bp.type == BodyPartType.Head);
-        bool embed = swingPower >= 0.5f && !bounce;   // сильный замах — клинок вонзается в тело
+        bool embed = impale && swingPower >= 0.5f && !bounce;   // насаживание выключено: клинок прорезает и выходит
 
         EnemyManager.RequestHit(e, new HitInfo { damage = swingDamage, dir = motion, part = bp.type, type = type, heavy = swingHeavy, embed = embed && !brute });
         e.LocalReact((int)bp.type, motion, Mathf.Lerp(0.7f, 1.3f, swingPower));
@@ -476,8 +518,11 @@ public class PlayerCombat : MonoBehaviour
             e.SlowMo(0.5f, 0.35f);        // замедляется только эта тварь — остальные нет
             return true;
         }
-        // клинок вязнет в теле — не масло: туловище держит дольше, рука/нога — чуть
-        dragUntil = Time.time + (bp.type == BodyPartType.Torso || brute ? 0.12f : 0.06f);
+        // клинок продавливает тело и выходит с другой стороны: в туловище вязнет дольше, в руке/ноге — чуть,
+        // чем сильнее замах, тем дольше режет. Тварь тяжёлая — клинок не пролетает сквозь неё, как сквозь нитку
+        bool thick = bp.type == BodyPartType.Torso || bp.type == BodyPartType.Head || brute;
+        dragUntil = Time.time + (thick ? Mathf.Lerp(0.13f, 0.22f, swingPower) : Mathf.Lerp(0.06f, 0.1f, swingPower)) * (brute ? 1.4f : 1f);
+        PlayerCamera.Shake(thick ? 0.15f : 0.08f);
         return false;
     }
 
@@ -485,7 +530,14 @@ public class PlayerCombat : MonoBehaviour
     {
         if (!IsStuck) return;
         bool gone = embedPart == null || embedPart.lost || !embedPart.enabled || embedEnemy == null || embedEnemy.HealthFraction <= 0f;
-        if (gone) { FreeBlade(); return; }
+        if (gone) { SlipOut(); return; }
+        // тварь отлетела (её отбросило, она уже летела, умерла у другого игрока) — клинок не может остаться
+        // «в ней» на расстоянии: выскальзывает и возвращается в руку, а не висит в воздухе
+        float far = Vector3.Distance(pivot.position, embedPart.transform.TransformPoint(embedLocal));
+        bool flewOff = far > bladeTipY + 1.0f;
+        // клинок вошёл, но тварь так и не насадилась на него (летела, громила, была в руках) — тоже выходит
+        bool notHeld = Time.time - cutStart > 0.35f && !embedEnemy.OnBlade && embedEnemy.kind != EnemyKind.Brute;
+        if (flewOff || notHeld) { SlipOut(); return; }
         if (cutting) return;
         // застрял: держишь ЛКМ — клинок остаётся внутри (и тварь на нём), отпустил — тебя вытаскивает, клинок выходит
         Mouse m = Mouse.current;
@@ -501,6 +553,21 @@ public class PlayerCombat : MonoBehaviour
         embedEnemy = null;
         embedPart = null;
         havePrev = false;
+    }
+
+    // Клинок выскользнул сам: меч плавно возвращается в руку из того места, где был, без рывка
+    void SlipOut()
+    {
+        FreeBlade();
+        swinging = false;
+        queued = false;
+        if (attack != Attack.None || swingModel == null) return;
+        recoilFrom = swingModel.localRotation; recoilFromPos = swingModel.localPosition;
+        attack = Attack.Recoil;
+        attackStart = Time.time;
+        attackDuration = 0.25f;
+        hitAt = 99f;
+        hitDone = true;
     }
 
     void RipOut()
@@ -569,7 +636,7 @@ public class PlayerCombat : MonoBehaviour
     // =====================================================================
     void StartAttack(Attack a)
     {
-        float cost = a == Attack.Kick ? kickStamina : a == Attack.Tool ? toolStamina : 0f;
+        float cost = a == Attack.Kick ? kickStamina : a == Attack.Tool ? toolStamina : a == Attack.Bash ? bashStamina : 0f;
         if (health != null && cost > 0f && !health.UseStamina(cost, false)) { Say("Нет сил — передохни"); return; }
 
         attack = a;
@@ -579,6 +646,12 @@ public class PlayerCombat : MonoBehaviour
         {
             case Attack.Kick: attackDuration = 0.45f; hitAt = 0.14f; break;
             case Attack.Tool: attackDuration = 0.45f; hitAt = 0.15f; break;
+            case Attack.Bash:
+                attackDuration = hotbar != null && hotbar.Current == Tool.Staff ? 0.6f : 0.5f;
+                hitAt = attackDuration * 0.45f;
+                CombatFx.Play(CombatFx.Snd.Whoosh, transform.position + Vector3.up * 1.5f, 0.6f, 0.9f);
+                Lunge(0.25f);
+                break;
             case Attack.Throw: attackDuration = 0.4f; hitAt = 0.1f; hitDone = true; break;
             case Attack.Rip: attackDuration = 0.3f; hitAt = 0.1f; hitDone = true; break;
         }
@@ -616,6 +689,23 @@ public class PlayerCombat : MonoBehaviour
                 e.LocalReact((int)BodyPartType.Torso, fwd, 1.3f);
                 CombatFx.Hitstop(0.05f);
                 PlayerCamera.Shake(0.25f);
+                break;
+            }
+            case Attack.Bash:
+            {
+                FindTargets(range - 0.5f, 60f, 1);
+                if (targets.Count == 0) break;
+                Enemy e = targets[0];
+                // лук — хлёсткий удар плечом лука сбоку, бластер — рукоятью сверху, посох — тяжёлый удар по голове
+                bool staffHit = tool == Tool.Staff;
+                HitInfo hi = staffHit
+                    ? new HitInfo { damage = 14f, dir = fwd, part = BodyPartType.Head, type = HitType.Chop }
+                    : new HitInfo { damage = tool == Tool.Blaster ? 10f : 8f, dir = fwd, part = tool == Tool.Blaster ? BodyPartType.Head : BodyPartType.Torso, type = HitType.Tool };
+                EnemyManager.RequestHit(e, hi);
+                e.LocalReact((int)hi.part, fwd, staffHit ? 1.2f : 0.9f);
+                CombatFx.Play(staffHit ? CombatFx.Snd.FleshHeavy : CombatFx.Snd.Thunk, e.transform.position + Vector3.up * 1.4f * e.bodyScale, 0.9f, staffHit ? 0.8f : 1.1f);
+                PlayerCamera.Shake(staffHit ? 0.3f : 0.2f);
+                PlayerCamera.Punch(staffHit ? new Vector3(4f, 0f, 0f) : new Vector3(1f, -3f, 2f));
                 break;
             }
             case Attack.Tool:
@@ -728,18 +818,20 @@ public class PlayerCombat : MonoBehaviour
     public static Vector3 LocalHoldPoint { get; private set; }
     bool throwing, throwOver;
     float throwStart, holdSend;
+    Vector3 gripFix;          // поправка: тварь подвешена так, чтобы кисть была ровно на её загривке
 
     void UpdateHold()
     {
-        if (heldId < 0) { LocalHoldId = -1; throwing = false; if (PlayerBody.Local != null) { PlayerBody.Local.HoldTarget = null; PlayerBody.Local.Twist = 0f; } return; }
+        if (heldId < 0) { poleHold = false; gripFix = Vector3.zero; LocalHoldId = -1; throwing = false; if (PlayerBody.Local != null) { PlayerBody.Local.HoldTarget = null; PlayerBody.Local.HoldTargetR = null; PlayerBody.Local.Twist = 0f; } return; }
         Enemy e = EnemyManager.Instance != null ? EnemyManager.Instance.Find(heldId) : null;
         if (e == null) return;
         float sc = e.bodyScale;
+        poleHold = hotbar != null && (hotbar.Current == Tool.Bow || hotbar.Current == Tool.Staff);
         // Держу ОДНОЙ (левой) рукой за шиворот — в правой остаётся оружие.
         // Сначала решаю, где моя кисть, а тварь подвешиваю под ней: кисть всегда на твари.
         float neck = 1.25f * sc;                                   // от ног твари до её шеи
         float hy = Mathf.Max(0.3f, -0.97f + neck);                 // крупную поднимаю выше, чтобы ноги не волочились
-        Vector3 hold = new Vector3(-0.2f, hy, 0.5f);               // кисть: слева впереди, на уровне груди
+        Vector3 hold = new Vector3(poleHold ? 0f : -0.2f, hy, poleHold ? 0.55f : 0.5f);   // кисть: впереди на уровне груди (с древком — по центру)
         Vector3 hand = hold;
         float twist = 0f;
         float t = Time.time;
@@ -763,6 +855,8 @@ public class PlayerCombat : MonoBehaviour
                 float a = Smooth(u) * Mathf.PI;                       // 0 — передо мной, π — за спиной
                 over = true;
                 overFeet = new Vector3(-0.25f, -0.75f + Mathf.Sin(a) * 1.9f, Mathf.Cos(a) * (0.75f + 0.4f * sc));
+                // древком за шею: тяну её на себя и вверх, через плечо — руки идут вместе с ней
+                if (poleHold) hand = hold + new Vector3(0f, Mathf.Sin(a) * 0.45f, -0.35f * (1f - Mathf.Cos(a)) * 0.5f);
                 PlayerCamera.Sway(new Vector3(-7f * Mathf.Sin(a), 0f, 0f) + new Vector3(5f, 0f, 0f) * Mathf.Clamp01(u * 3f - 2f));
             }
         }
@@ -773,13 +867,37 @@ public class PlayerCombat : MonoBehaviour
         }
         // ноги твари — под кистью; тело чуть дальше кисти (держу за ворот спереди)
         Vector3 feet = over ? overFeet : hand + Vector3.forward * 0.22f * sc - Vector3.up * neck;
+        // где загривок твари на самом деле (она бьётся, откинута назад) — сдвигаю её, пока он не окажется в кисти
+        Vector3 realGrip = transform.InverseTransformPoint(e.GripPoint);
+        Vector3 aim = over ? realGrip : hand;
+        if (!over)
+        {
+            gripFix += (aim - realGrip) * (1f - Mathf.Exp(-12f * Time.deltaTime));
+            gripFix = Vector3.ClampMagnitude(gripFix, 0.8f);
+        }
+        feet += gripFix;
         if (throwing && Mathf.Clamp01((t - throwStart) / (throwOver ? 0.6f : 0.45f)) >= 1f) { SetHold(e, transform.TransformPoint(feet)); ReleaseThrow(); return; }
         SetHold(e, transform.TransformPoint(feet));
         if (PlayerBody.Local != null)
         {
             // кисть тянется к тому месту твари, где она реально сейчас (тварь догоняет точку с небольшим запозданием)
-            Vector3 grip = e.transform.position + Vector3.up * neck - transform.forward * 0.22f * sc;
-            PlayerBody.Local.HoldTarget = grip;
+            if (poleHold)
+            {
+                // древко лежит поперёк, за шеей твари; руки — на его концах
+                Vector3 c = transform.TransformPoint(hand);
+                Vector3 across = transform.right;
+                Vector3 fwd = transform.forward;
+                if (over) { c = e.GripPoint; }
+                polePos = c + fwd * 0.12f * sc;          // чуть дальше загривка — за шеей
+                poleRot = Quaternion.LookRotation(fwd, across);   // длинная ось оружия — поперёк
+                PlayerBody.Local.HoldTarget = polePos - across * 0.28f;
+                PlayerBody.Local.HoldTargetR = polePos + across * 0.28f;
+            }
+            else
+            {
+                PlayerBody.Local.HoldTarget = e.GripPoint;   // кисть — на загривке твари, где он реально сейчас
+                PlayerBody.Local.HoldTargetR = null;
+            }
             PlayerBody.Local.Twist = twist;
         }
     }
@@ -1036,6 +1154,17 @@ public class PlayerCombat : MonoBehaviour
             pos = Vector3.Lerp(pos, bpos, w);
         }
 
+        // от третьего лица меч не дальше длины руки от плеча героя: рукоять всегда в кисти,
+        // а не висит перед головой (бег, наклон, захват — меч идёт вместе с рукой)
+        if (pcam != null && pcam.IsThirdPerson && PlayerBody.Local != null && swingModel.parent != null)
+        {
+            Vector3 sh = PlayerBody.Local.RightShoulder;
+            // замах и удар идут всей рукой: движение кисти шире (вокруг плеча), а не только поворот клинка
+            if (hasSword) { Vector3 arcC = new Vector3(0.15f, -0.3f, 0.3f); pos = arcC + (pos - arcC) * 1.6f; }
+            Vector3 toGrip = swingModel.parent.TransformPoint(pos) - sh;
+            float armReach = PlayerBody.ArmReach * 0.97f;
+            if (toGrip.magnitude > armReach) pos = swingModel.parent.InverseTransformPoint(sh + toGrip.normalized * armReach);
+        }
         swingModel.localRotation = rot;
         swingModel.localPosition = pos;
 

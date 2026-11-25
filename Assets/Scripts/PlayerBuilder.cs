@@ -69,7 +69,7 @@ public class PlayerBuilder : MonoBehaviour
         Mouse mouse = Mouse.current;
         if (kb == null || mouse == null || pieces.Count == 0) return;
 
-        if (!IsBuilding)
+        if (!IsBuilding || PlayerCarry.Busy)   // несу предмет — молот не работает
         {
             if (menuOpen) CloseMenu(true);
             if (ghost != null) { Destroy(ghost); ghostFor = -1; }

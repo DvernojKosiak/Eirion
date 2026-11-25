@@ -79,6 +79,7 @@ public static class EirionSceneBuilder
         BuildVillage();
         BuildForest();
         BuildRocks();
+        BuildProps();
         BuildLailillium(open);
         BuildAbyss();
         BuildBorders();
@@ -548,6 +549,61 @@ public static class EirionSceneBuilder
     // Внутри — корпуса из каменных деталей с этажами, лестницами, дверями и бойницами,
     // узкая улица с севера на юг (по ней идут твари), мосты между корпусами на втором ярусе.
     const float Floor = 4f;
+
+    // Предметы, которые можно поднять (E) и швырнуть (ЛКМ): в южном дворе, рядом с местом появления.
+    // Логика (Rigidbody, коллайдер, Throwable) — на самом объекте, картинка — дочерний «Model» (потом — настоящая модель)
+    static void BuildProps()
+    {
+        Transform parent = new GameObject("Props").transform;
+        float y = Top + 0.7f;
+        Prop(parent, "Stone", "Камень", new Vector3(2f, y, -26f), PrimitiveType.Sphere, new Vector3(0.3f, 0.26f, 0.28f), stone, 3f, false);
+        Prop(parent, "Stone", "Камень", new Vector3(3f, y, -27f), PrimitiveType.Sphere, new Vector3(0.28f, 0.24f, 0.3f), stone, 3f, false);
+        Prop(parent, "Rock", "Булыжник", new Vector3(4.5f, y, -26.5f), PrimitiveType.Sphere, new Vector3(0.5f, 0.42f, 0.46f), stone, 8f, false);
+        Prop(parent, "Rock", "Булыжник", new Vector3(13f, y, -25f), PrimitiveType.Sphere, new Vector3(0.48f, 0.4f, 0.5f), stone, 8f, false);
+        Prop(parent, "BigRock", "Глыба", new Vector3(14.5f, y + 0.2f, -27f), PrimitiveType.Sphere, new Vector3(0.75f, 0.6f, 0.7f), stone, 18f, false);
+        for (int i = 0; i < 3; i++)
+            Prop(parent, "Barrel", "Бочка", new Vector3(7f + i * 0.9f, y + 0.3f, -27.5f), PrimitiveType.Cylinder, new Vector3(0.55f, 0.45f, 0.55f), wood, 14f, true);
+        for (int i = 0; i < 3; i++)
+            Prop(parent, "Crate", "Ящик", new Vector3(9.5f + (i % 2) * 0.75f, y + (i / 2) * 0.7f, -25.5f), PrimitiveType.Cube, new Vector3(0.65f, 0.65f, 0.65f), darkWood, 10f, true);
+    }
+
+    static void Prop(Transform parent, string name, string display, Vector3 pos, PrimitiveType shape, Vector3 size, Material mat, float mass, bool breakable)
+    {
+        GameObject go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.transform.position = pos;
+        if (shape == PrimitiveType.Sphere) go.AddComponent<SphereCollider>().radius = Mathf.Max(size.x, Mathf.Max(size.y, size.z)) * 0.5f;
+        else if (shape == PrimitiveType.Cylinder)
+        {
+            CapsuleCollider cc = go.AddComponent<CapsuleCollider>();
+            cc.radius = size.x * 0.5f; cc.height = size.y * 2f;   // цилиндр Unity высотой в 2 раза больше своего масштаба
+        }
+        else go.AddComponent<BoxCollider>().size = size;
+        Rigidbody rb = go.AddComponent<Rigidbody>();
+        rb.mass = mass;
+        rb.interpolation = RigidbodyInterpolation.Interpolate;
+        Throwable t = go.AddComponent<Throwable>();
+        t.displayName = display;
+        t.breakable = breakable;
+
+        // картинка
+        GameObject vis = GameObject.CreatePrimitive(shape);
+        Object.DestroyImmediate(vis.GetComponent<Collider>());
+        vis.name = "Model";
+        vis.transform.SetParent(go.transform, false);
+        vis.transform.localScale = size;
+        vis.GetComponent<Renderer>().sharedMaterial = mat;
+        if (shape == PrimitiveType.Cylinder)   // обручи на бочке
+            for (int i = -1; i <= 1; i += 2)
+            {
+                GameObject hoop = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                Object.DestroyImmediate(hoop.GetComponent<Collider>());
+                hoop.transform.SetParent(go.transform, false);
+                hoop.transform.localPosition = new Vector3(0f, i * size.y * 0.6f, 0f);
+                hoop.transform.localScale = new Vector3(size.x * 1.04f, 0.03f, size.z * 1.04f);
+                hoop.GetComponent<Renderer>().sharedMaterial = steel;
+            }
+    }
 
     static void BuildFort()
     {
@@ -1246,9 +1302,10 @@ public static class EirionSceneBuilder
         builder.pieces = catalog.FindAll(p => p.buildable);
         PlayerInteract interact = player.AddComponent<PlayerInteract>();
         PlayerHealth health = player.AddComponent<PlayerHealth>();
+        PlayerCarry carry = player.AddComponent<PlayerCarry>();   // поднять и бросить предмет (E, ЛКМ)
 
         // Управление работает только у своего игрока — включит NetworkPlayer
-        Behaviour[] ownerOnly = { movement, pcam, hotbar, inventory, combat, bowCtl, staffCtl, blasterCtl, builder, interact, health };
+        Behaviour[] ownerOnly = { movement, pcam, hotbar, inventory, combat, bowCtl, staffCtl, blasterCtl, builder, interact, health, carry };
         foreach (Behaviour b in ownerOnly) b.enabled = false;
 
         NetworkPlayer np = player.AddComponent<NetworkPlayer>();

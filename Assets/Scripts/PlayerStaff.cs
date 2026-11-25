@@ -153,7 +153,7 @@ public class PlayerStaff : MonoBehaviour
         Mouse mouse = Mouse.current;
         Keyboard kb = Keyboard.current;
         bool locked = Cursor.lockState == CursorLockMode.Locked;
-        bool can = mouse != null && kb != null && locked && cam != null && (combat == null || (!combat.IsHolding && combat.BashP < 0f));
+        bool can = mouse != null && kb != null && locked && cam != null && (combat == null || (!combat.IsHolding && combat.BashP < 0f)) && !PlayerCarry.Busy;
 
         if (!can) { charging = false; aiming = false; }
         else

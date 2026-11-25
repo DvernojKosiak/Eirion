@@ -97,7 +97,7 @@ public class PlayerInteract : MonoBehaviour
             if (bp != null && bp.station != StationType.None) lookedStation = bp;
         }
 
-        if (lookedStation != null && kb.eKey.wasPressedThisFrame && Panels.Open("station"))
+        if (lookedStation != null && !PlayerCarry.Busy && kb.eKey.wasPressedThisFrame && Panels.Open("station"))
             openStation = lookedStation;
     }
 

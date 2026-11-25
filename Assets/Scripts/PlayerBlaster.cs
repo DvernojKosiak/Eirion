@@ -113,7 +113,7 @@ public class PlayerBlaster : MonoBehaviour
         Mouse mouse = Mouse.current;
         Keyboard kb = Keyboard.current;
         bool locked = Cursor.lockState == CursorLockMode.Locked;
-        bool can = mouse != null && kb != null && locked && cam != null && (combat == null || (!combat.IsHolding && combat.BashP < 0f));
+        bool can = mouse != null && kb != null && locked && cam != null && (combat == null || (!combat.IsHolding && combat.BashP < 0f)) && !PlayerCarry.Busy;
 
         bool aiming = can && mouse.rightButton.isPressed;
         aim = Mathf.MoveTowards(aim, aiming ? 1f : 0f, Time.deltaTime * 7f);

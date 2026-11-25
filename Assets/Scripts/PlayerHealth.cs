@@ -242,7 +242,7 @@ public class PlayerHealth : MonoBehaviour
         // Блок: меч + ПКМ
         Mouse mouse = Mouse.current;
         bool wantBlock = mouse != null && mouse.rightButton.isPressed && Cursor.lockState == CursorLockMode.Locked &&
-                         (hotbar == null || hotbar.Current == Tool.Sword) && Time.time >= blockBrokenUntil && Stamina > 1f;
+                         (hotbar == null || hotbar.Current == Tool.Sword) && !PlayerCarry.Busy && Time.time >= blockBrokenUntil && Stamina > 1f;
         if (wantBlock && !IsBlocking) { blockStart = Time.time; guardSetAt = Time.time; GuardSide = 0; guardAcc = Vector2.zero; }
         if (wantBlock)
         {

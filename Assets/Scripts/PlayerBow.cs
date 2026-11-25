@@ -114,7 +114,7 @@ public class PlayerBow : MonoBehaviour
 
         Mouse mouse = Mouse.current;
         bool locked = Cursor.lockState == CursorLockMode.Locked;
-        bool busy = combat != null && (combat.IsHolding || combat.IsAttacking);
+        bool busy = (combat != null && (combat.IsHolding || combat.IsAttacking)) || PlayerCarry.Busy;
         bool blocking = health != null && health.IsBlocking;
         bool can = mouse != null && locked && !busy && !blocking;
 

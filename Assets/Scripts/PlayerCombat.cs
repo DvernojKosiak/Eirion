@@ -250,7 +250,8 @@ public class PlayerCombat : MonoBehaviour
         bool locked = Cursor.lockState == CursorLockMode.Locked;
         bool hasSword = tool == Tool.Sword;
         bool blocking = health != null && health.IsBlocking;
-        bool canFight = tool != Tool.Hammer && mouse != null && kb != null && locked;
+        bool canFight = tool != Tool.Hammer && mouse != null && kb != null && locked && !PlayerCarry.Busy
+                         && !(movement != null && (movement.IsClimbing || movement.IsMantling));   // руки заняты предметом или стеной — не бьём
 
         if (!canFight || !hasSword || blocking || IsHolding) charging = false;
 

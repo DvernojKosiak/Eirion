@@ -28,7 +28,8 @@ public class PlayerBody : MonoBehaviour
     // Управляют бой и захват (только у своего игрока)
     public float KickP = -1f;            // пинок: 0..1 — сколько прошло, меньше 0 — не пинаю
     public Vector3? HoldTarget;          // держу тварь — левая кисть сюда
-    public Vector3? HoldTargetR;         // правая кисть сюда (держу тварь древком лука или посоха двумя руками)
+    public Vector3? HoldTargetR;
+    public Vector3? CarryL, CarryR;      // несу предмет двумя руками — кисти по его бокам         // правая кисть сюда (держу тварь древком лука или посоха двумя руками)
     Vector3 toolBase, toolTurn;
     Transform lastTool;          // корпус идёт за оружием: резкое движение оружия разворачивает плечи
     public float Twist;                  // разворот корпуса (бросок)
@@ -243,10 +244,12 @@ public class PlayerBody : MonoBehaviour
 
         // с оружием в руке (видно от третьего лица и у чужих): правая рука тянется к оружию
         Transform tool = hotbar != null ? hotbar.CurrentModel : null;
-        if (local && HoldTarget.HasValue && !dead)
+        Vector3? leftT = HoldTarget ?? CarryL;
+        Vector3? rightT = HoldTargetR ?? CarryR;
+        if (local && leftT.HasValue && !dead)
         {
             // держу тварь левой рукой: кисть ровно в точке захвата (локоть сгибается сам — по длине руки)
-            Vector3 reachL = torso.InverseTransformPoint(HoldTarget.Value) - armL.localPosition;
+            Vector3 reachL = torso.InverseTransformPoint(leftT.Value) - armL.localPosition;
             float reachLen = reachL.magnitude;
             if (reachLen > 0.01f)
             {
@@ -261,14 +264,38 @@ public class PlayerBody : MonoBehaviour
         if (tool != null && tool.gameObject.activeInHierarchy && !dead)
         {
             Vector3 to = torso.InverseTransformPoint(tool.position) - armR.localPosition;
-            if (local && HoldTargetR.HasValue) to = torso.InverseTransformPoint(HoldTargetR.Value) - armR.localPosition; // правая — на конце древка
+            if (local && rightT.HasValue) to = torso.InverseTransformPoint(rightT.Value) - armR.localPosition; // правая — на конце древка / на предмете
             if (to.sqrMagnitude > 0.01f) Reach(to, out aR, out eR);   // кисть ровно на рукояти, локоть сгибается
             bool twoHands = hotbar.Current == Tool.Bow || hotbar.Current == Tool.Staff || hotbar.Current == Tool.Blaster;
-            if (twoHands && !(local && HoldTarget.HasValue))   // левая занята тварью — оружие в одной правой
+            if (twoHands && !(local && leftT.HasValue))   // левая занята тварью — оружие в одной правой
             {
                 Vector3 toL = torso.InverseTransformPoint(tool.position) - armL.localPosition;
                 if (toL.sqrMagnitude > 0.01f) Reach(toL, out aL, out eL);
             }
+        }
+
+        if (local && CarryR.HasValue && !dead && (tool == null || !tool.gameObject.activeInHierarchy))
+            Reach(torso.InverseTransformPoint(CarryR.Value) - armR.localPosition, out aR, out eR);
+
+        // лазание: руки над головой по очереди перехватывают стену, ноги упираются и толкают
+        if (local && movement != null && movement.IsClimbing && !dead)
+        {
+            float cp = movement.ClimbPhase;
+            float a1 = Mathf.Sin(cp), a2 = Mathf.Sin(cp + Mathf.PI);
+            aL = Quaternion.Euler(-150f + a1 * 25f, 0f, -15f); eL = Quaternion.Euler(-30f - a1 * 25f, 0f, 0f);
+            aR = Quaternion.Euler(-150f + a2 * 25f, 0f, 15f);  eR = Quaternion.Euler(-30f - a2 * 25f, 0f, 0f);
+            tL = Quaternion.Euler(-50f + a2 * 30f, 0f, 0f); kL = Quaternion.Euler(70f + a2 * 25f, 0f, 0f);
+            tR = Quaternion.Euler(-50f + a1 * 30f, 0f, 0f); kR = Quaternion.Euler(70f + a1 * 25f, 0f, 0f);
+        }
+        // залезает на уступ: руки упираются в край и выжимают тело, нога закидывается наверх
+        if (local && movement != null && movement.IsMantling && !dead)
+        {
+            float m = movement.MantleP;
+            float push = Mathf.Clamp01(m / 0.6f);
+            aL = Quaternion.Euler(Mathf.Lerp(-160f, -30f, push), 0f, -10f); aR = Quaternion.Euler(Mathf.Lerp(-160f, -30f, push), 0f, 10f);
+            eL = eR = Quaternion.Euler(Mathf.Lerp(-20f, -70f, Mathf.Sin(push * Mathf.PI)), 0f, 0f);
+            tR = Quaternion.Euler(Mathf.Lerp(0f, -95f, Mathf.Clamp01((m - 0.4f) / 0.4f)), 0f, 0f); kR = Quaternion.Euler(Mathf.Lerp(10f, 110f, Mathf.Clamp01((m - 0.4f) / 0.4f)), 0f, 0f);
+            torsoRot *= Quaternion.Euler(25f * Mathf.Sin(m * Mathf.PI), 0f, 0f);
         }
 
         float k = 1f - Mathf.Exp(-18f * dt);
